@@ -1,0 +1,147 @@
+services:
+  mongodb:
+    image: mongodb/mongodb-community-server:8.0-ubuntu2204
+    container_name: wr_mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin123
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - wr_network
+
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: wr_minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - wr_network
+
+  create-buckets:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb local/landing-zone --ignore-existing;
+      mc mb local/transformed-zone --ignore-existing;
+      exit 0;
+      "
+    networks:
+      - wr_network
+
+  scraper:
+    build: .
+    profiles: ["cli"]
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      MONGO_URI: mongodb://admin:admin123@mongodb:27017
+      MONGO_DB: workplace_relations
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_SECURE: "false"
+    working_dir: /opt/dagster/scrapy_project
+    volumes:
+      - ./dagster_project:/opt/dagster/dagster_project
+      - ./scrapy_project:/opt/dagster/scrapy_project
+      - ./transformer:/opt/dagster/transformer
+      - ./scripts:/opt/dagster/scripts
+      - ./config.yaml:/opt/dagster/config.yaml
+    networks:
+      - wr_network
+
+  dagster-webserver:
+    build: .
+    container_name: wr_dagster_webserver
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      DAGSTER_HOME: /opt/dagster
+      MONGO_URI: mongodb://admin:admin123@mongodb:27017
+      MONGO_DB: workplace_relations
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_SECURE: "false"
+    volumes:
+      - ./dagster_project:/opt/dagster/dagster_project
+      - ./scrapy_project:/opt/dagster/scrapy_project
+      - ./transformer:/opt/dagster/transformer
+      - ./scripts:/opt/dagster/scripts
+      - ./config.yaml:/opt/dagster/config.yaml
+      - dagster_home:/opt/dagster
+    command: dagster-webserver -h 0.0.0.0 -p 3000
+    networks:
+      - wr_network
+
+  dagster-daemon:
+    build: .
+    container_name: wr_dagster_daemon
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      DAGSTER_HOME: /opt/dagster
+      MONGO_URI: mongodb://admin:admin123@mongodb:27017
+      MONGO_DB: workplace_relations
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_SECURE: "false"
+    volumes:
+      - ./dagster_project:/opt/dagster/dagster_project
+      - ./scrapy_project:/opt/dagster/scrapy_project
+      - ./transformer:/opt/dagster/transformer
+      - ./scripts:/opt/dagster/scripts
+      - ./config.yaml:/opt/dagster/config.yaml
+      - dagster_home:/opt/dagster
+    command: dagster-daemon run
+    networks:
+      - wr_network
+
+networks:
+  wr_network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+  minio_data:
+  dagster_home:

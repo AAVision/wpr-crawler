@@ -1,0 +1,27 @@
+scraping:
+  partition_months: 1
+  concurrent_requests: 8
+  download_delay: 2.0
+  retry_times: 3
+  timeout: 60
+
+# Body IDs from the actual website (workplacerelations.ie)
+# Verified from the checkbox filter on the search page
+bodies:
+  - id: "1"
+    name: "Employment Appeals Tribunal"
+  - id: "2"
+    name: "Equality Tribunal"
+  - id: "3"
+    name: "Labour Court"
+  - id: "15376"
+    name: "Workplace Relations Commission"
+
+storage:
+  mongodb:
+    database: workplace_relations
+    landing_collection: landing_documents
+    transformed_collection: transformed_documents
+  minio:
+    landing_bucket: landing-zone
+    transformed_bucket: transformed-zone
