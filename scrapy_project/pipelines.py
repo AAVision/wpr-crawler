@@ -1,23 +1,12 @@
 import io
 import hashlib
-import json
-import logging
 from datetime import datetime
 from scrapy.exceptions import DropItem
 from scrapy_project.utils.storage import MinIOStorage, MongoDBStorage
+from utils.logging_utils import setup_logging, log_structured
 
-logger = logging.getLogger(__name__)
-
-
-def _log_structured(event: str, data: dict):
-    """Emit a structured JSON log entry from pipeline."""
-    log_entry = {
-        'timestamp': datetime.now().isoformat(),
-        'component': 'pipeline',
-        'event': event,
-        **data,
-    }
-    logger.info(json.dumps(log_entry))
+# Centralized Logging
+logger = setup_logging(__name__)
 
 
 class HashCalculationPipeline:
@@ -31,7 +20,7 @@ class HashCalculationPipeline:
             item['file_hash'] = hashlib.sha256(content).hexdigest()
         else:
             item['file_hash'] = None
-            _log_structured('hash_missing', {
+            log_structured(logger, 'hash_missing', {
                 'identifier': item.get('identifier'),
                 'reason': 'no document content',
             })
@@ -51,7 +40,7 @@ class MinIOStoragePipeline:
     def process_item(self, item, spider=None):
         content = item.get('document_content')
         if not content:
-            _log_structured('storage_skip', {
+            log_structured(logger, 'storage_skip', {
                 'identifier': item.get('identifier'),
                 'reason': 'no content to store',
             })
@@ -81,7 +70,7 @@ class MinIOStoragePipeline:
             )
             item['file_path'] = object_path
 
-            _log_structured('document_stored', {
+            log_structured(logger, 'document_stored', {
                 'identifier': identifier,
                 'path': object_path,
                 'size_bytes': content_length,
@@ -92,11 +81,11 @@ class MinIOStoragePipeline:
             # Remove binary content from item (not needed in MongoDB)
             del item['document_content']
         except Exception as e:
-            _log_structured('storage_failed', {
+            log_structured(logger, 'storage_failed', {
                 'identifier': identifier,
                 'path': object_path,
                 'error': str(e),
-            })
+            }, level=setup_logging().error) # Pass error level
             raise DropItem(f"Storage failed for {identifier}: {str(e)}")
 
         return item
@@ -117,58 +106,103 @@ class MinIOStoragePipeline:
 
 
 class MongoDBPipeline:
-    """Store metadata in MongoDB. Handles idempotency via file_hash deduplication."""
+    """Store metadata in MongoDB. Handles idempotency via bulk operations."""
 
-    def __init__(self):
+    def __init__(self, batch_size=50):
         self.storage = None
+        self.items_buffer = []
+        self.batch_size = batch_size
+
+    @classmethod
+    def from_crawler(cls, crawler):
+        return cls(
+            batch_size=crawler.settings.getint('MONGO_BATCH_SIZE', 50)
+        )
 
     def open_spider(self, spider=None):
         self.storage = MongoDBStorage()
 
     def process_item(self, item, spider=None):
         if not item.get('file_hash'):
-            _log_structured('metadata_skip', {
+            log_structured(logger, 'metadata_skip', {
                 'identifier': item.get('identifier'),
                 'reason': 'no file hash',
             })
             return item
 
-        doc = item.to_dict()
-        existing = self.storage.find_by_identifier(item.get('identifier'))
-
-        if existing:
-            if existing.get('file_hash') == item.get('file_hash'):
-                _log_structured('document_unchanged', {
-                    'identifier': item.get('identifier'),
-                    'file_hash': item.get('file_hash'),
-                })
-                # Update spider stats for structured summary
-                if hasattr(spider, '_stats'):
-                    spider._stats['records_skipped_duplicate'] += 1
-                raise DropItem(f"Duplicate unchanged document: {item.get('identifier')}")
-            else:
-                _log_structured('document_updated', {
-                    'identifier': item.get('identifier'),
-                    'old_hash': existing.get('file_hash'),
-                    'new_hash': item.get('file_hash'),
-                    'version': existing.get('version', 0) + 1,
-                })
-                doc['updated_at'] = datetime.now().isoformat()
-                doc['version'] = existing.get('version', 0) + 1
-                self.storage.update_by_identifier(item.get('identifier'), doc)
-        else:
-            doc['created_at'] = datetime.now().isoformat()
-            doc['version'] = 1
-            doc_id = self.storage.insert_document(doc)
-            _log_structured('metadata_stored', {
-                'identifier': item.get('identifier'),
-                'mongo_id': doc_id,
-                'body': item.get('body'),
-                'partition_date': item.get('partition_date'),
-            })
+        self.items_buffer.append((item, spider))
+        if len(self.items_buffer) >= self.batch_size:
+            self._flush_buffer()
 
         return item
 
+    def _flush_buffer(self):
+        if not self.items_buffer:
+            return
+
+        from pymongo import UpdateOne
+
+        # 1. Extract identifiers for buffered items
+        identifiers = [item.get('identifier') for item, _ in self.items_buffer]
+        
+        # 2. Bulk query for existing documents
+        # This replaces N separate find_one() calls with 1 bulk query
+        cursor = self.storage.collection.find(
+            {'identifier': {'$in': identifiers}},
+            {'identifier': 1, 'file_hash': 1, 'version': 1}
+        )
+        existing_docs = {doc['identifier']: doc for doc in cursor}
+
+        bulk_ops = []
+        for item, spider in self.items_buffer:
+            identifier = item.get('identifier')
+            new_hash = item.get('file_hash')
+            doc = item.to_dict()
+            existing = existing_docs.get(identifier)
+
+            if existing:
+                if existing.get('file_hash') == new_hash:
+                    log_structured(logger, 'document_unchanged', {
+                        'identifier': identifier,
+                        'file_hash': new_hash,
+                    })
+                    if hasattr(spider, '_stats'):
+                        spider._stats['records_skipped_duplicate'] += 1
+                    continue # Skip unchanged duplicate
+                else:
+                    log_structured(logger, 'document_updated', {
+                        'identifier': identifier,
+                        'old_hash': existing.get('file_hash'),
+                        'new_hash': new_hash,
+                        'version': existing.get('version', 0) + 1,
+                    })
+                    doc['updated_at'] = datetime.now().isoformat()
+                    doc['version'] = existing.get('version', 0) + 1
+                    bulk_ops.append(
+                        UpdateOne({'identifier': identifier}, {'$set': doc}, upsert=False)
+                    )
+            else:
+                doc['created_at'] = datetime.now().isoformat()
+                doc['version'] = 1
+                bulk_ops.append(
+                    UpdateOne({'identifier': identifier}, {'$set': doc}, upsert=True)
+                )
+
+        # 3. Bulk Write
+        if bulk_ops:
+            try:
+                result = self.storage.collection.bulk_write(bulk_ops, ordered=False)
+                log_structured(logger, 'metadata_batch_stored', {
+                    'upserted_count': result.upserted_count,
+                    'modified_count': result.modified_count,
+                    'total_ops': len(bulk_ops),
+                })
+            except Exception as e:
+                logger.error(f"Bulk write failed: {e}")
+
+        self.items_buffer = []
+
     def close_spider(self, spider=None):
+        self._flush_buffer()
         if self.storage:
             self.storage.close()

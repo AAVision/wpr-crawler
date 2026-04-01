@@ -26,6 +26,7 @@ RUN playwright install-deps && playwright install chromium
 COPY dagster_project/ ./dagster_project/
 COPY scrapy_project/ ./scrapy_project/
 COPY transformer/ ./transformer/
+COPY utils/ ./utils/
 COPY scripts/ ./scripts/
 COPY config.yaml .
 

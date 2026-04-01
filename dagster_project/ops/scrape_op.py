@@ -1,11 +1,12 @@
 import subprocess
 import json
-import logging
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
-from dagster import op, Field, String, Int, Dict as DagsterDict
+from dagster import op, Field, String, Int, DynamicOutput, DynamicOut
+from utils.logging_utils import setup_logging
 
-logger = logging.getLogger(__name__)
+# Centralized Logging
+logger = setup_logging(__name__)
 
 # Correct body IDs matching the actual website
 BODIES = [
@@ -39,75 +40,72 @@ def get_partitions(start_date: datetime, end_date: datetime, months: int = 1):
     "start_date": Field(String),
     "end_date": Field(String),
     "partition_months": Field(Int, default_value=1),
-    "bodies": Field(DagsterDict, is_required=False, default_value={"bodies": BODIES}),
-})
-def scrape_documents(context):
-    """Orchestrate scraping across all bodies and time partitions."""
+    "bodies": Field(list, is_required=False, default_value=BODIES),
+}, out=DynamicOut())
+def generate_scrape_tasks(context):
+    """Generate dynamic tasks for each body and partition combination."""
     start_date = datetime.strptime(context.op_config["start_date"], '%Y-%m-%d')
     end_date = datetime.strptime(context.op_config["end_date"], '%Y-%m-%d')
     partition_months = context.op_config.get("partition_months", 1)
-    bodies = context.op_config.get("bodies", {"bodies": BODIES}).get("bodies", BODIES)
+    bodies = context.op_config.get("bodies", BODIES)
 
     partitions = get_partitions(start_date, end_date, partition_months)
 
-    summary = {
-        "timestamp": datetime.now().isoformat(),
-        "start_date": start_date.isoformat(),
-        "end_date": end_date.isoformat(),
-        "total_partitions": len(partitions),
-        "total_bodies": len(bodies),
-        "partitions_processed": 0,
-        "bodies_processed": 0,
-        "total_records_found": 0,
-        "total_records_scraped": 0,
-        "failed_partitions": [],
-        "failed_documents": [],
-    }
-
-    for ps, pe, plabel in partitions:
-        context.log.info(json.dumps({
-            "event": "partition_start",
-            "partition": plabel,
-            "start": ps,
-            "end": pe,
-        }))
-
+    for i, (ps, pe, plabel) in enumerate(partitions):
         for body in bodies:
-            context.log.info(json.dumps({
-                "event": "body_scrape_start",
-                "partition": plabel,
+            # Create a unique key for Dagster tracking
+            # Format: YYYY_MM_BODYID (must be alphanumeric and underscores)
+            tag = f"{plabel.replace('-', '_')}_{body['id']}"
+            
+            task_data = {
+                "start_date": ps,
+                "end_date": pe,
                 "body_id": body['id'],
                 "body_name": body['name'],
-            }))
+                "partition_date": plabel,
+            }
+            
+            yield DynamicOutput(
+                value=task_data,
+                mapping_key=tag
+            )
 
-            try:
-                result = run_spider(ps, pe, body['id'], body['name'], plabel)
-                summary["total_records_found"] += result.get("records_found", 0)
-                summary["total_records_scraped"] += result.get("records_scraped", 0)
-                summary["bodies_processed"] += 1
-                if result.get("failed_downloads"):
-                    summary["failed_documents"].extend(result["failed_downloads"])
-            except Exception as e:
-                error_info = {
-                    "partition": plabel,
-                    "body_id": body['id'],
-                    "body_name": body['name'],
-                    "error": str(e),
-                }
-                summary["failed_partitions"].append(error_info)
-                context.log.error(json.dumps({
-                    "event": "body_scrape_failed",
-                    **error_info,
-                }))
+@op
+def scrape_single_body(context, task_data: dict):
+    """Execute a single spider run for one body and one partition in parallel."""
+    ps = task_data["start_date"]
+    pe = task_data["end_date"]
+    bid = task_data["body_id"]
+    bname = task_data["body_name"]
+    plabel = task_data["partition_date"]
 
-        summary["partitions_processed"] += 1
+    context.log.info(f"Starting parallel scrape for {bname} in partition {plabel}")
+    
+    try:
+        result = run_spider(ps, pe, bid, bname, plabel)
+        # Add basic identification
+        result["body_name"] = bname
+        result["partition"] = plabel
+        return result
+    except Exception as e:
+        context.log.error(f"Failed to scrape {bname} for {plabel}: {str(e)}")
+        raise e
 
-    # Final run summary
-    context.log.info(json.dumps({
-        "event": "run_summary",
-        **summary,
-    }, indent=2))
-
+@op
+def consolidate_results(context, results: list):
+    """Aggregate all parallel results into a single summary."""
+    summary = {
+        "timestamp": datetime.now().isoformat(),
+        "total_tasks": len(results),
+        "total_records_found": sum(r.get("records_found", 0) for r in results),
+        "total_records_scraped": sum(r.get("records_scraped", 0) for r in results),
+        "failed_documents": []
+    }
+    for r in results:
+        if r.get("failed_downloads"):
+            summary["failed_documents"].extend(r["failed_downloads"])
+            
+    context.log.info(f"Parallel Scrape Completed: {summary}")
     return summary
 
 

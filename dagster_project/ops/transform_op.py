@@ -1,8 +1,9 @@
 from dagster import op, Field, String
 from transformer.transform import TransformationPipeline
-import logging
+from utils.logging_utils import setup_logging
 
-logger = logging.getLogger(__name__)
+# Centralized Logging
+logger = setup_logging(__name__)
 
 @op(config_schema={
     "start_date": Field(String, is_required=False),

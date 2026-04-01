@@ -4,14 +4,15 @@ from urllib.parse import urljoin, urlencode
 import re
 import json
 import random
-import logging
 from datetime import datetime
 
 from scrapy_project.items import DecisionItem
 from scrapy_project.settings import IMPERSONATE_BROWSERS
 from scrapy_playwright.page import PageMethod
+from utils.logging_utils import setup_logging
 
-logger = logging.getLogger(__name__)
+# Centralized Logging
+logger = setup_logging(__name__)
 
 
 class WorkplaceRelationsSpider(scrapy.Spider):
@@ -59,31 +60,42 @@ class WorkplaceRelationsSpider(scrapy.Spider):
         else:
             self.end_date_formatted = None
 
-    async def start(self):
-        """Build the search URL with correct parameter names and yield request."""
+    def start_requests(self):
+        """Yield a single consolidated start request for all bodies if body_id is 'all'."""
+        bid = self.body_id
+        if not bid or bid.lower() == 'all':
+            # Use comma-separated list for maximum speed (combined pagination)
+            bid = ",".join(self.BODY_MAP.keys())
+        
+        # If it's a list or 'all', we use 'All Bodies' as the placeholder name
+        # Individual items will have their body parsed from their detail page
+        log_name = self.body_name if ',' not in str(bid) else "Combined Bodies"
+
         self._log_structured('partition_start', {
             'partition_date': self.partition_date,
-            'body_id': self.body_id,
-            'body_name': self.body_name,
+            'body_id': bid,
+            'body_name': log_name,
             'start_date': self.start_date,
             'end_date': self.end_date,
         })
 
-        params = {'decisions': '1'}
-        if self.body_id:
-            params['body'] = self.body_id
+        params = {'decisions': '1', 'body': bid}
         if self.start_date_formatted:
             params['from'] = self.start_date_formatted
         if self.end_date_formatted:
             params['to'] = self.end_date_formatted
 
         url = f'{self.search_base}?{urlencode(params)}'
+        print(url)
+        print("=================================")
 
         yield scrapy.Request(
             url=url,
             callback=self.parse_search_results,
             meta={
                 'page_number': 1,
+                'body_id': bid,
+                'body_name': log_name,
                 'playwright': True,
                 'playwright_include_page': False,
                 'playwright_page_methods': [
@@ -124,11 +136,15 @@ class WorkplaceRelationsSpider(scrapy.Spider):
         next_link = response.css('a.next::attr(href)').get()
         if next_link:
             next_url = response.urljoin(next_link)
+            print(next_url)
+            print("=================================")
             yield scrapy.Request(
                 url=next_url,
                 callback=self.parse_search_results,
                 meta={
                     'page_number': page_num + 1,
+                    'body_id': response.meta.get('body_id'),
+                    'body_name': response.meta.get('body_name'),
                     'playwright': True,
                     'playwright_include_page': False,
                     'playwright_page_methods': [
@@ -222,6 +238,13 @@ class WorkplaceRelationsSpider(scrapy.Spider):
 
     def parse_decision_detail(self, response: HtmlResponse):
         """Parse individual decision/case detail page and extract metadata."""
+        # 1. Extract body from the <title> tag for correct attribution in combined searches
+        # Format: "IDENTIFIER - BODY_NAME"
+        page_title = response.css('title::text').get('').strip()
+        body_from_title = None
+        if ' - ' in page_title:
+            body_from_title = page_title.split(' - ', 1)[-1].strip()
+
         identifier = response.meta.get('identifier') or self._extract_identifier(response)
         title = response.meta.get('title') or self._extract_title(response)
         description = response.meta.get('description') or self._extract_description(response)
@@ -236,7 +259,7 @@ class WorkplaceRelationsSpider(scrapy.Spider):
         item['title'] = title
         item['description'] = description
         item['date'] = date.isoformat() if date else None
-        item['body'] = self.body_name
+        item['body'] = body_from_title or response.meta.get('body_name') or self.body_name
         item['link_to_doc'] = document_url or response.url
         item['partition_date'] = self.partition_date
         item['source_url'] = response.url

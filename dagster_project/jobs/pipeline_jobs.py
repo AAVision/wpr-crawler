@@ -1,15 +1,17 @@
 from dagster import job
-from dagster_project.ops.scrape_op import scrape_documents
+from dagster_project.ops.scrape_op import generate_scrape_tasks, scrape_single_body, consolidate_results
 from dagster_project.ops.transform_op import transform_documents
 
 def create_scrape_job():
-    @job(name="scrape_workplace_relations")
+    @job(name="scrape_workplace_relations_job")
     def scrape_job():
-        scrape_documents()
+        tasks = generate_scrape_tasks()
+        results = tasks.map(scrape_single_body)
+        consolidate_results(results.collect())
     return scrape_job
 
 def create_transform_job():
-    @job(name="transform_documents")
+    @job(name="transform_documents_job")
     def transform_job():
         transform_documents()
     return transform_job
@@ -17,6 +19,8 @@ def create_transform_job():
 def create_full_pipeline_job():
     @job(name="full_pipeline")
     def full_pipeline():
-        scrape_result = scrape_documents()
-        transform_documents(scrape_result)
+        tasks = generate_scrape_tasks()
+        results = tasks.map(scrape_single_body)
+        summary = consolidate_results(results.collect())
+        transform_documents(summary)
     return full_pipeline

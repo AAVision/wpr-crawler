@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 import os
-import logging
 import hashlib
 import io
 from datetime import datetime
 from typing import Optional, Dict
 from minio import Minio
-from pymongo import MongoClient
+from pymongo import MongoClient, UpdateOne
 from tenacity import retry, stop_after_attempt, wait_exponential
 import polars as pl
 from .html_cleaner import HTMLCleaner
+from utils.logging_utils import setup_logging
 
-logging.basicConfig(level=os.getenv('LOG_LEVEL', 'INFO'), format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# Centralized Logging
+logger = setup_logging(__name__)
 
 
 class TransformationPipeline:
@@ -78,23 +78,35 @@ class TransformationPipeline:
         logger.info(f"Loaded {len(df)} documents into Polars DataFrame")
 
         stats = {'total': len(df), 'transformed': 0, 'skipped': 0, 'failed': 0}
+        bulk_ops = []
 
         # Process each row
         for row in df.iter_rows(named=True):
             try:
-                success = self._transform_document(row)
-                if success:
-                    stats['transformed'] += 1
+                # _transform_document now returns the update operation instead of performing it
+                op_result = self._transform_document(row)
+                if op_result:
+                    if isinstance(op_result, UpdateOne):
+                        bulk_ops.append(op_result)
+                        stats['transformed'] += 1
+                    else:
+                        # returned True for skipped/already transformed
+                        stats['skipped'] += 1
                 else:
                     stats['skipped'] += 1
             except Exception as e:
                 stats['failed'] += 1
                 logger.error(f"Failed to transform {row.get('identifier')}: {e}")
 
+        # Execute all database updates in a single N+1-free roundtrip
+        if bulk_ops:
+            logger.info(f"Executing bulk write for {len(bulk_ops)} metadata updates...")
+            self.transformed_meta.bulk_write(bulk_ops)
+
         logger.info(f"Transformation completed: {stats}")
         return stats
 
-    def _transform_document(self, doc: Dict) -> bool:
+    def _transform_document(self, doc: Dict) -> Optional[UpdateOne]:
         identifier = doc.get('identifier')
         document_type = doc.get('document_type', 'html')
         file_path = doc.get('file_path')
@@ -107,7 +119,7 @@ class TransformationPipeline:
         content = self._download_file(self.landing_bucket, file_path)
         if not content:
             logger.error(f"Failed to download file: {file_path}")
-            return False
+            return None
 
         # Clean HTML
         cleaned_content = self.html_cleaner.extract_content(content, doc.get('source_url'))
@@ -117,10 +129,10 @@ class TransformationPipeline:
         original_hash = doc.get('file_hash')
 
         # Check if already transformed
-        existing = self.transformed_meta.find_one({'identifier': identifier})
+        existing = self.transformed_meta.find_one({'identifier': identifier}, {'new_hash': 1, 'version': 1})
         if existing and existing.get('new_hash') == new_hash:
             logger.info(f"Document {identifier} already transformed with same hash, skipping")
-            return True
+            return True  # Signal skip
 
         # Prepare new filename
         safe_id = "".join(c for c in identifier if c.isalnum() or c in ('-', '_'))
@@ -132,7 +144,7 @@ class TransformationPipeline:
         # Upload cleaned HTML
         self._upload_file(self.transformed_bucket, new_object_path, cleaned_content, 'text/html')
 
-        # Store transformed metadata
+        # Return a Bulk Op instead of executing immediately
         transformed_doc = {
             'identifier': identifier,
             'title': doc.get('title'),
@@ -150,22 +162,16 @@ class TransformationPipeline:
             'version': existing.get('version', 0) + 1 if existing else 1
         }
 
-        if existing:
-            self.transformed_meta.update_one({'identifier': identifier}, {'$set': transformed_doc})
-        else:
-            self.transformed_meta.insert_one(transformed_doc)
+        return UpdateOne({'identifier': identifier}, {'$set': transformed_doc}, upsert=True)
 
-        logger.info(f"Successfully transformed and stored: {identifier}")
-        return True
-
-    def _copy_as_is(self, doc: Dict) -> bool:
+    def _copy_as_is(self, doc: Dict) -> Optional[UpdateOne]:
         identifier = doc.get('identifier')
         file_path = doc.get('file_path')
         document_type = doc.get('document_type')
 
         content = self._download_file(self.landing_bucket, file_path)
         if not content:
-            return False
+            return None
 
         safe_id = "".join(c for c in identifier if c.isalnum() or c in ('-', '_'))
         new_file_name = f"{safe_id}.{document_type}"
@@ -195,13 +201,7 @@ class TransformationPipeline:
             'is_copy': True
         }
 
-        existing = self.transformed_meta.find_one({'identifier': identifier})
-        if existing:
-            self.transformed_meta.update_one({'identifier': identifier}, {'$set': transformed_doc})
-        else:
-            self.transformed_meta.insert_one(transformed_doc)
-
-        return True
+        return UpdateOne({'identifier': identifier}, {'$set': transformed_doc}, upsert=True)
 
     def _download_file(self, bucket: str, object_path: str) -> Optional[bytes]:
         try:

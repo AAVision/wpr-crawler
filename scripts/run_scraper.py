@@ -10,14 +10,13 @@ import argparse
 import subprocess
 import sys
 import os
-import json
-import logging
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from transformer.transform import TransformationPipeline
+from utils.logging_utils import setup_logging, log_structured
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
-logger = logging.getLogger(__name__)
+# Centralized Logging
+logger = setup_logging(__name__)
 
 # Correct body IDs from the actual website
 BODIES = [
@@ -58,14 +57,13 @@ def run_spider(start_date, end_date, body_id, body_name, partition_date):
     env['PYTHONPATH'] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     project_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'scrapy_project')
 
-    logger.info(json.dumps({
-        "event": "spider_start",
+    log_structured(logger, "spider_start", {
         "body": body_name,
         "body_id": body_id,
         "partition": partition_date,
         "start_date": start_date,
         "end_date": end_date,
-    }))
+    })
 
     result = subprocess.run(cmd, env=env, cwd=project_dir, timeout=3600)
     return result.returncode
@@ -99,33 +97,35 @@ def main():
         "failures": [],
     }
 
-    logger.info(json.dumps({
-        "event": "scraper_start",
+    log_structured(logger, "scraper_start", {
         "start_date": args.start_date,
         "end_date": args.end_date,
         "partitions": len(partitions),
         "bodies": [b['name'] for b in bodies],
-    }))
+    })
+
+    # Determine target body ID (specific or 'all' for maximum speed)
+    target_body_id = args.body_id if args.body_id else "all"
+    target_body_name = next((b['name'] for b in BODIES if b['id'] == args.body_id), "Combined Bodies") if args.body_id else "Combined Bodies"
 
     for ps, pe, plabel in partitions:
-        for body in bodies:
-            try:
-                returncode = run_spider(ps, pe, body['id'], body['name'], plabel)
-                if returncode == 0:
-                    summary['successful_runs'] += 1
-                else:
-                    summary['failed_runs'] += 1
-                    summary['failures'].append({
-                        'partition': plabel, 'body': body['name'],
-                        'error': f'Exit code {returncode}',
-                    })
-            except Exception as e:
+        try:
+            returncode = run_spider(ps, pe, target_body_id, target_body_name, plabel)
+            if returncode == 0:
+                summary['successful_runs'] += 1
+            else:
                 summary['failed_runs'] += 1
                 summary['failures'].append({
-                    'partition': plabel, 'body': body['name'], 'error': str(e),
+                    'partition': plabel, 'body': target_body_name,
+                    'error': f'Exit code {returncode}',
                 })
+        except Exception as e:
+            summary['failed_runs'] += 1
+            summary['failures'].append({
+                'partition': plabel, 'body': target_body_name, 'error': str(e),
+            })
 
-    logger.info(json.dumps({"event": "scraper_complete", **summary}, indent=2))
+    log_structured(logger, "scraper_complete", summary)
 
     # Run the transformation pipeline after successful scrape entries
     if summary['successful_runs'] > 0:

@@ -2,12 +2,22 @@
 
 A production-grade pipeline to scrape Irish legal decisions, store them in MinIO, and transform HTML content.
 
+## Dashboards & Monitoring
+
+After starting the infrastructure with `docker compose up -d`, the following tools are available:
+
+- **Dagster UI (Orchestration)**: [http://localhost:3000](http://localhost:3000)
+- **MinIO Console (File Storage)**: [http://localhost:9001](http://localhost:9001)
+    - Username: `minioadmin` | Password: `minioadmin` (see `.env`)
+- **Mongo Express (Database Web UI)**: [http://localhost:8081](http://localhost:8081)
+    - Username: `admin` | Password: `pass`
+
 ## Quick Start
 
 1. Copy `.env.example` to `.env` and adjust as needed.
-2. Run `docker-compose up -d`
+2. Run `docker compose up -d`
 3. Access Dagster UI at http://localhost:3000
-4. Launch the `full_pipeline` job with your desired date range.
+4. Launch the `full_pipeline` job via **Launchpad** with your desired date range.
 
 ## Features
 

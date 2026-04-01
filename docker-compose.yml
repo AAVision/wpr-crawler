@@ -19,6 +19,24 @@ services:
     networks:
       - wr_network
 
+  mongo-express:
+    image: mongo-express:latest
+    container_name: wr_mongo_express
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: admin
+      ME_CONFIG_MONGODB_ADMINPASSWORD: admin123
+      ME_CONFIG_MONGODB_URL: mongodb://admin:admin123@mongodb:27017
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: pass
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - wr_network
+
   minio:
     image: quay.io/minio/minio:latest
     container_name: wr_minio
@@ -77,6 +95,7 @@ services:
       - ./scrapy_project:/opt/dagster/scrapy_project
       - ./transformer:/opt/dagster/transformer
       - ./scripts:/opt/dagster/scripts
+      - ./utils:/opt/dagster/utils
       - ./config.yaml:/opt/dagster/config.yaml
     networks:
       - wr_network
@@ -104,9 +123,10 @@ services:
       - ./scrapy_project:/opt/dagster/scrapy_project
       - ./transformer:/opt/dagster/transformer
       - ./scripts:/opt/dagster/scripts
+      - ./utils:/opt/dagster/utils
       - ./config.yaml:/opt/dagster/config.yaml
       - dagster_home:/opt/dagster
-    command: dagster-webserver -h 0.0.0.0 -p 3000
+    command: dagster-webserver -h 0.0.0.0 -p 3000 -f /opt/dagster/dagster_project/definitions.py
     networks:
       - wr_network
 
@@ -131,9 +151,10 @@ services:
       - ./scrapy_project:/opt/dagster/scrapy_project
       - ./transformer:/opt/dagster/transformer
       - ./scripts:/opt/dagster/scripts
+      - ./utils:/opt/dagster/utils
       - ./config.yaml:/opt/dagster/config.yaml
       - dagster_home:/opt/dagster
-    command: dagster-daemon run
+    command: dagster-daemon run -f /opt/dagster/dagster_project/definitions.py
     networks:
       - wr_network
 
