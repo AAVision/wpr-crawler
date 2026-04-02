@@ -34,31 +34,36 @@ PLAYWRIGHT_LAUNCH_OPTIONS = {
     ],
 }
 
+# Block unnecessary assets in Playwright to save bandwidth and CPU
+PLAYWRIGHT_ABORT_REQUEST = lambda request: request.resource_type in ["image", "font", "stylesheet", "media"]
+
 # Increase timeouts to handle slow server responses/Cloudflare validation
-PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 60000
-DOWNLOAD_TIMEOUT = 60
-
-# Let scrapy-impersonate set the correct User-Agent for the
-# impersonated browser automatically. We override per-request.
-USER_AGENT = None
+PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 120000
+DOWNLOAD_TIMEOUT = 120
 
 # ============================================================
-# Anti-Detection: Rate Limiting & Human-like Behavior
+# Performance & Memory Watchdog (Prevents OOM)
 # ============================================================
+MEMUSAGE_ENABLED = True
+MEMUSAGE_LIMIT_MB = 2048  # Graceful shutdown if RAM > 2GB
+MEMUSAGE_CHECK_INTERVAL_SECONDS = 10
+
 ROBOTSTXT_OBEY = False
 
-CONCURRENT_REQUESTS = int(os.getenv("CONCURRENT_REQUESTS", 4))
-CONCURRENT_REQUESTS_PER_DOMAIN = 2
-DOWNLOAD_DELAY = float(os.getenv("REQUEST_DELAY", 3.0))
+# EXTREME SPEED MODE: x1000 target
+CONCURRENT_REQUESTS = int(os.getenv("CONCURRENT_REQUESTS", 64))
+CONCURRENT_REQUESTS_PER_DOMAIN = 64
+DOWNLOAD_DELAY = float(os.getenv("REQUEST_DELAY", 0.0))
 
-# Randomize delay between 50%-150% of DOWNLOAD_DELAY to look human
-RANDOMIZE_DOWNLOAD_DELAY = True
+# Disable delay for maximum speed
+RANDOMIZE_DOWNLOAD_DELAY = False
 
-# AutoThrottle dynamically adjusts speed based on server response times
+# AutoThrottle allows high-burst speed with safety
 AUTOTHROTTLE_ENABLED = True
-AUTOTHROTTLE_START_DELAY = 3.0
-AUTOTHROTTLE_MAX_DELAY = 20.0
-AUTOTHROTTLE_TARGET_CONCURRENCY = 1.5
+AUTOTHROTTLE_START_DELAY = 1.0
+AUTOTHROTTLE_MAX_DELAY = 15.0
+AUTOTHROTTLE_TARGET_CONCURRENCY = 16.0
+AUTOTHROTTLE_TARGET_CONCURRENCY = 16.0  # Allow up to 16 concurrent requests per domain
 AUTOTHROTTLE_DEBUG = False
 
 # Retry on Cloudflare-specific codes

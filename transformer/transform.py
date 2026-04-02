@@ -2,7 +2,7 @@
 import os
 import hashlib
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict
 from minio import Minio
 from pymongo import MongoClient, UpdateOne
@@ -66,35 +66,68 @@ class TransformationPipeline:
     ) -> Dict:
         logger.info(f"Starting transformation pipeline from {start_date} to {end_date}")
 
-        # Build query
+        # Build query: support ISO and legacy DD/MM/YYYY formats
         query = {}
         if start_date or end_date:
-            date_query = {}
-            if start_date:
-                date_query["$gte"] = start_date
-            if end_date:
-                date_query["$lte"] = end_date
-            if date_query:
-                query["date"] = date_query
+            # If dates are messy, we try a broader regex for safety on the year
+            y_start = start_date[:4] if start_date else "1986"
+            y_end = end_date[:4] if end_date else "2030"
+            
+            # Catch YYYY-MM-DD or DD/MM/YYYY OR DD-MM-YYYY in the year range
+            # This is a fallback to ensure we get candidates even if formats are mixed in DB
+            query["$or"] = [
+                {"date": {"$gte": start_date, "$lte": f"{end_date}T23:59:59"}},
+                {"date": {"$regex": f"({y_start}|{y_end}|{(int(y_start)+int(y_end))//2})$"}} # Year at end
+            ]
 
-        # Fetch metadata from MongoDB and convert to Polars DataFrame for efficient processing
+        # Debugging
+        logger.info(f"Connecting to MongoDB: {self.mongo_uri}")
+        logger.info(f"Target DB/Collection: {self.mongo_db}.{self.landing_collection}")
+        logger.info(f"Executing query: {query}")
+
         cursor = self.landing_meta.find(query)
         docs = list(cursor)
 
         if not docs:
-            logger.info("No documents found in date range.")
+            total_count = self.landing_meta.count_documents({})
+            logger.info(f"No documents found for query. Total documents in collection: {total_count}")
             return {"total": 0, "transformed": 0, "skipped": 0, "failed": 0}
 
-        # Use Polars to create DataFrame for metadata
-        df = pl.DataFrame(docs)
-        logger.info(f"Loaded {len(df)} documents into Polars DataFrame")
+        # We remove Polars entirely to bypass ANY SchemaError from varying MongoDB documents
+        # and instead do robust filtering in pure Python
+        def robust_date_parse(d_str):
+            if not d_str: return None
+            for fmt in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"]:
+                try: return datetime.strptime(str(d_str)[:19], fmt)
+                except ValueError: continue
+            return None
+
+        sd_dt = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None
+        ed_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1) if end_date else None
+
+        filtered_docs = []
+        for d in docs:
+            parsed_date = robust_date_parse(d.get("date"))
+            
+            # Apply date filters
+            if sd_dt and (parsed_date is None or parsed_date < sd_dt):
+                continue
+            if ed_dt and (parsed_date is None or parsed_date >= ed_dt):
+                continue
+                
+            filtered_docs.append(d)
+
+        logger.info(f"Found {len(filtered_docs)} documents after robust date filtering.")
+        
+        if len(filtered_docs) == 0:
+            return {"total": 0, "transformed": 0, "skipped": 0, "failed": 0}
 
         # Use ThreadPoolExecutor for concurrent I/O (MinIO downloads/uploads)
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         if max_workers is None:
             max_workers = int(os.getenv("TRANSFORM_MAX_WORKERS", "10"))
-        stats = {"total": len(df), "transformed": 0, "skipped": 0, "failed": 0}
+        stats = {"total": len(filtered_docs), "transformed": 0, "skipped": 0, "failed": 0}
         bulk_ops = []
 
         logger.info(f"Starting concurrent transformation with {max_workers} workers...")
@@ -102,8 +135,9 @@ class TransformationPipeline:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Map each row to a transformation task
             future_to_id = {
-                executor.submit(self._transform_document, row): row.get("identifier")
-                for row in df.iter_rows(named=True)
+                executor.submit(self._transform_document, doc): doc.get("identifier")
+                for doc in filtered_docs
+
             }
 
             for future in as_completed(future_to_id):

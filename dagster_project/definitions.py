@@ -1,17 +1,20 @@
 from dagster import Definitions, ScheduleDefinition
 from dagster_project.jobs import pipeline_jobs
 
-scrape_job = pipeline_jobs.create_scrape_job()
-transform_job = pipeline_jobs.create_transform_job()
+# Primary Job: Scrape + Transform (Matches run_scraper.py)
 full_pipeline_job = pipeline_jobs.create_full_pipeline_job()
 
+# Scrape-only is just an alias for the same unified workflow
+# since user wants them identical
+scrape_job = pipeline_jobs.create_scrape_job()
+
 daily_schedule = ScheduleDefinition(
-    name="daily_scrape_schedule",
+    name="daily_all_bodies_schedule",
     cron_schedule="0 9 * * *",
-    job=scrape_job,
+    job=full_pipeline_job,
 )
 
 defs = Definitions(
-    jobs=[scrape_job, transform_job, full_pipeline_job],
+    jobs=[full_pipeline_job, scrape_job],
     schedules=[daily_schedule],
 )

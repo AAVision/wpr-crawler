@@ -77,6 +77,7 @@ services:
   scraper:
     build: .
     profiles: ["cli"]
+    shm_size: '2gb'
     depends_on:
       mongodb:
         condition: service_healthy
@@ -103,6 +104,7 @@ services:
   dagster-webserver:
     build: .
     container_name: wr_dagster_webserver
+    shm_size: '2gb'
     depends_on:
       mongodb:
         condition: service_healthy
@@ -133,6 +135,7 @@ services:
   dagster-daemon:
     build: .
     container_name: wr_dagster_daemon
+    shm_size: '2gb'
     depends_on:
       mongodb:
         condition: service_healthy

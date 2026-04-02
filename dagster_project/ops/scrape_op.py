@@ -1,168 +1,103 @@
-import subprocess
-import json
-from datetime import datetime, timedelta
-from dateutil.relativedelta import relativedelta
-from dagster import op, Field, String, Int, DynamicOutput, DynamicOut
-from utils.logging_utils import setup_logging
+from dagster import op, Field, String, Int, DynamicOut, DynamicOutput, Any
+from dagster_project.workflow_runner import run_workflow
+from transformer.transform import TransformationPipeline
 
-# Centralized Logging
-logger = setup_logging(__name__)
-
-# Correct body IDs matching the actual website
-BODIES = [
+# Correct default bodies
+DEFAULT_BODIES = [
     {"id": "1", "name": "Employment Appeals Tribunal"},
     {"id": "2", "name": "Equality Tribunal"},
     {"id": "3", "name": "Labour Court"},
     {"id": "15376", "name": "Workplace Relations Commission"},
 ]
 
+@op(
+    config_schema={
+        "start_date": Field(String, default_value="2020-01-01"),
+        "end_date": Field(String, default_value="2020-12-31"),
+        "partition_months": Field(Int, default_value=1),
+        "body_id": Field(String, is_required=False),
+        "bodies": Field([Any], is_required=False),
+        "max_workers": Field(Int, is_required=False),
+    }
+)
+def unified_pipeline_op(context):
+    """The consolidated op that performs everything in one high-performance run."""
+    config = context.op_config
+    
+    if config.get("bodies"):
+        body_id = ",".join([str(b.get("id")) for b in config["bodies"] if b.get("id")])
+    elif config.get("body_id"):
+        body_id = config["body_id"]
+    else:
+        body_id = "all"
 
-def get_partitions(start_date: datetime, end_date: datetime, months: int = 1):
-    """Generate monthly partitions between start and end dates."""
-    partitions = []
-    current = start_date.replace(day=1)
-    while current <= end_date:
-        partition_start = current
-        partition_end = min(
-            current + relativedelta(months=months) - timedelta(days=1), end_date
-        )
-        partitions.append(
-            (
-                partition_start.strftime("%Y-%m-%d"),
-                partition_end.strftime("%Y-%m-%d"),
-                current.strftime("%Y-%m"),
-            )
-        )
-        current += relativedelta(months=months)
-    return partitions
-
+    summary = run_workflow(
+        start_date=config["start_date"],
+        end_date=config["end_date"],
+        body_id=body_id,
+        partition_months=config["partition_months"],
+    )
+    
+    if summary["status"] == "Failed":
+        raise Exception(f"Pipeline FAILED for {summary.get('body')}")
+        
+    return summary
 
 @op(
     config_schema={
-        "start_date": Field(String),
-        "end_date": Field(String),
-        "partition_months": Field(Int, default_value=1),
-        "bodies": Field(list, is_required=False, default_value=BODIES),
+        "start_date": Field(String, default_value="2020-01-01"),
+        "end_date": Field(String, default_value="2020-12-31"),
+        "bodies": Field([Any], default_value=DEFAULT_BODIES),
     },
     out=DynamicOut(),
 )
 def generate_scrape_tasks(context):
-    """Generate dynamic tasks for each body and partition combination."""
-    start_date = datetime.strptime(context.op_config["start_date"], "%Y-%m-%d")
-    end_date = datetime.strptime(context.op_config["end_date"], "%Y-%m-%d")
-    partition_months = context.op_config.get("partition_months", 1)
-    bodies = context.op_config.get("bodies", BODIES)
-
-    partitions = get_partitions(start_date, end_date, partition_months)
-
-    for i, (ps, pe, plabel) in enumerate(partitions):
-        for body in bodies:
-            # Create a unique key for Dagster tracking
-            # Format: YYYY_MM_BODYID (must be alphanumeric and underscores)
-            tag = f"{plabel.replace('-', '_')}_{body['id']}"
-
-            task_data = {
-                "start_date": ps,
-                "end_date": pe,
-                "body_id": body["id"],
-                "body_name": body["name"],
-                "partition_date": plabel,
-            }
-
-            yield DynamicOutput(value=task_data, mapping_key=tag)
-
+    """Legacy-compatible op for body/partition task generation."""
+    bodies = context.op_config.get("bodies", DEFAULT_BODIES)
+    
+    for body in bodies:
+        task_data = {
+            **body,
+            "start_date": context.op_config["start_date"],
+            "end_date": context.op_config["end_date"]
+        }
+        yield DynamicOutput(value=task_data, mapping_key=f"body_{body['id']}")
 
 @op
-def scrape_single_body(context, task_data: dict):
-    """Execute a single spider run for one body and one partition in parallel."""
-    ps = task_data["start_date"]
-    pe = task_data["end_date"]
-    bid = task_data["body_id"]
-    bname = task_data["body_name"]
-    plabel = task_data["partition_date"]
-
-    context.log.info(f"Starting parallel scrape for {bname} in partition {plabel}")
-
-    try:
-        result = run_spider(ps, pe, bid, bname, plabel)
-        # Add basic identification
-        result["body_name"] = bname
-        result["partition"] = plabel
-        return result
-    except Exception as e:
-        context.log.error(f"Failed to scrape {bname} for {plabel}: {str(e)}")
-        raise e
-
-
-@op
-def consolidate_results(context, results: list):
-    """Aggregate all parallel results into a single summary."""
-    summary = {
-        "timestamp": datetime.now().isoformat(),
-        "total_tasks": len(results),
-        "total_records_found": sum(r.get("records_found", 0) for r in results),
-        "total_records_scraped": sum(r.get("records_scraped", 0) for r in results),
-        "failed_documents": [],
-    }
-    for r in results:
-        if r.get("failed_downloads"):
-            summary["failed_documents"].extend(r["failed_downloads"])
-
-    context.log.info(f"Parallel Scrape Completed: {summary}")
+def scrape_body_partition(context, task_data: dict):
+    """Scrape ONLY without transformation for parallel safety."""
+    summary = run_workflow(
+        start_date=task_data["start_date"],
+        end_date=task_data["end_date"],
+        body_id=task_data["id"],
+        skip_transform=True  # WAIT for bulk transform
+    )
+    
+    if summary["status"] == "Failed":
+        raise Exception(f"Body scrape for {task_data.get('name')} FAILED")
+        
     return summary
 
-
-def run_spider(start_date, end_date, body_id, body_name, partition_date):
-    """Execute a single spider run for a specific body and date range."""
-    cmd = [
-        "scrapy",
-        "crawl",
-        "wr_spider",
-        "-a",
-        f"start_date={start_date}",
-        "-a",
-        f"end_date={end_date}",
-        "-a",
-        f"body_id={body_id}",
-        "-a",
-        f"body_name={body_name}",
-        "-a",
-        f"partition_date={partition_date}",
-        "-s",
-        "LOG_LEVEL=INFO",
-    ]
-
-    result = subprocess.run(
-        cmd,
-        cwd="/opt/dagster/scrapy_project",
-        capture_output=True,
-        text=True,
-        timeout=3600,
-    )
-
-    if result.returncode != 0:
-        raise Exception(
-            f"Scrapy failed for {body_name} [{partition_date}]: {result.stderr[-500:]}"
-        )
-
-    # Try to parse stats from spider output (look for the run_summary JSON log)
-    stats = {
-        "records_found": 0,
-        "records_scraped": 0,
-        "failed_downloads": [],
-        "start_date": start_date,
-        "end_date": end_date,
+@op(
+    config_schema={
+        "start_date": Field(String, default_value="2020-01-01"),
+        "end_date": Field(String, default_value="2020-12-31"),
+        "max_workers": Field(Int, default_value=10),
     }
-    for line in result.stdout.split("\n"):
-        if '"event": "run_summary"' in line or '"event":"run_summary"' in line:
-            try:
-                # Extract JSON from the log line
-                json_start = line.index("{")
-                data = json.loads(line[json_start:])
-                stats["records_found"] = data.get("records_found", 0)
-                stats["records_scraped"] = data.get("records_scraped", 0)
-                stats["failed_downloads"] = data.get("downloads_failed", [])
-            except (ValueError, json.JSONDecodeError):
-                pass
-
-    return stats
+)
+def bulk_transform_op(context, scrape_results: list):
+    """Performs transformation for the whole date range AFTER all scrapes finish."""
+    config = context.op_config
+    
+    context.log.info(f"All scrapes complete. Starting bulk transformation for {config['start_date']} to {config['end_date']}")
+    
+    pipeline = TransformationPipeline()
+    try:
+        stats = pipeline.run(
+            start_date=config["start_date"],
+            end_date=config["end_date"],
+            max_workers=config["max_workers"]
+        )
+        return stats
+    finally:
+        pipeline.close()
