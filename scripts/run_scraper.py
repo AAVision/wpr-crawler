@@ -6,6 +6,7 @@ Usage:
     python scripts/run_scraper.py --start-date 2024-01-01 --end-date 2025-01-01
     python scripts/run_scraper.py --start-date 2024-01-01 --end-date 2025-01-01 --body-id 15376
 """
+
 import argparse
 import subprocess
 import sys
@@ -33,12 +34,16 @@ def get_partitions(start_date: datetime, end_date: datetime, months: int = 1):
     current = start_date.replace(day=1)
     while current <= end_date:
         p_start = current
-        p_end = min(current + relativedelta(months=months) - timedelta(days=1), end_date)
-        partitions.append((
-            p_start.strftime('%Y-%m-%d'),
-            p_end.strftime('%Y-%m-%d'),
-            current.strftime('%Y-%m'),
-        ))
+        p_end = min(
+            current + relativedelta(months=months) - timedelta(days=1), end_date
+        )
+        partitions.append(
+            (
+                p_start.strftime("%Y-%m-%d"),
+                p_end.strftime("%Y-%m-%d"),
+                current.strftime("%Y-%m"),
+            )
+        )
         current += relativedelta(months=months)
     return partitions
 
@@ -46,47 +51,67 @@ def get_partitions(start_date: datetime, end_date: datetime, months: int = 1):
 def run_spider(start_date, end_date, body_id, body_name, partition_date):
     """Execute the spider for one body and one partition."""
     cmd = [
-        "scrapy", "crawl", "wr_spider",
-        "-a", f"start_date={start_date}",
-        "-a", f"end_date={end_date}",
-        "-a", f"body_id={body_id}",
-        "-a", f"body_name={body_name}",
-        "-a", f"partition_date={partition_date}",
+        "scrapy",
+        "crawl",
+        "wr_spider",
+        "-a",
+        f"start_date={start_date}",
+        "-a",
+        f"end_date={end_date}",
+        "-a",
+        f"body_id={body_id}",
+        "-a",
+        f"body_name={body_name}",
+        "-a",
+        f"partition_date={partition_date}",
     ]
     env = os.environ.copy()
-    env['PYTHONPATH'] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    project_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'scrapy_project')
+    env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    project_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scrapy_project"
+    )
 
-    log_structured(logger, "spider_start", {
-        "body": body_name,
-        "body_id": body_id,
-        "partition": partition_date,
-        "start_date": start_date,
-        "end_date": end_date,
-    })
+    log_structured(
+        logger,
+        "spider_start",
+        {
+            "body": body_name,
+            "body_id": body_id,
+            "partition": partition_date,
+            "start_date": start_date,
+            "end_date": end_date,
+        },
+    )
 
     result = subprocess.run(cmd, env=env, cwd=project_dir, timeout=3600)
     return result.returncode
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Run WR spider with date partitioning')
-    parser.add_argument('--start-date', required=True, help='Start date (YYYY-MM-DD)')
-    parser.add_argument('--end-date', required=True, help='End date (YYYY-MM-DD)')
-    parser.add_argument('--body-id', help='Scrape only a specific body ID')
-    parser.add_argument('--partition-months', type=int, default=1, help='Months per partition (default: 1)')
+    parser = argparse.ArgumentParser(description="Run WR spider with date partitioning")
+    parser.add_argument("--start-date", required=True, help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--end-date", required=True, help="End date (YYYY-MM-DD)")
+    parser.add_argument("--body-id", help="Scrape only a specific body ID")
+    parser.add_argument(
+        "--partition-months",
+        type=int,
+        default=1,
+        help="Months per partition (default: 1)",
+    )
     args = parser.parse_args()
 
-    start = datetime.strptime(args.start_date, '%Y-%m-%d')
-    end = datetime.strptime(args.end_date, '%Y-%m-%d')
+    start = datetime.strptime(args.start_date, "%Y-%m-%d")
+    end = datetime.strptime(args.end_date, "%Y-%m-%d")
     partitions = get_partitions(start, end, args.partition_months)
 
     # Filter bodies if specific body_id provided
     bodies = BODIES
     if args.body_id:
-        bodies = [b for b in BODIES if b['id'] == args.body_id]
+        bodies = [b for b in BODIES if b["id"] == args.body_id]
         if not bodies:
-            logger.error(f"Unknown body_id: {args.body_id}. Valid: {[b['id'] for b in BODIES]}")
+            logger.error(
+                f"Unknown body_id: {args.body_id}. Valid: {[b['id'] for b in BODIES]}"
+            )
             sys.exit(1)
 
     summary = {
@@ -97,38 +122,53 @@ def main():
         "failures": [],
     }
 
-    log_structured(logger, "scraper_start", {
-        "start_date": args.start_date,
-        "end_date": args.end_date,
-        "partitions": len(partitions),
-        "bodies": [b['name'] for b in bodies],
-    })
+    log_structured(
+        logger,
+        "scraper_start",
+        {
+            "start_date": args.start_date,
+            "end_date": args.end_date,
+            "partitions": len(partitions),
+            "bodies": [b["name"] for b in bodies],
+        },
+    )
 
     # Determine target body ID (specific or 'all' for maximum speed)
     target_body_id = args.body_id if args.body_id else "all"
-    target_body_name = next((b['name'] for b in BODIES if b['id'] == args.body_id), "Combined Bodies") if args.body_id else "Combined Bodies"
+    target_body_name = (
+        next((b["name"] for b in BODIES if b["id"] == args.body_id), "Combined Bodies")
+        if args.body_id
+        else "Combined Bodies"
+    )
 
     for ps, pe, plabel in partitions:
         try:
             returncode = run_spider(ps, pe, target_body_id, target_body_name, plabel)
             if returncode == 0:
-                summary['successful_runs'] += 1
+                summary["successful_runs"] += 1
             else:
-                summary['failed_runs'] += 1
-                summary['failures'].append({
-                    'partition': plabel, 'body': target_body_name,
-                    'error': f'Exit code {returncode}',
-                })
+                summary["failed_runs"] += 1
+                summary["failures"].append(
+                    {
+                        "partition": plabel,
+                        "body": target_body_name,
+                        "error": f"Exit code {returncode}",
+                    }
+                )
         except Exception as e:
-            summary['failed_runs'] += 1
-            summary['failures'].append({
-                'partition': plabel, 'body': target_body_name, 'error': str(e),
-            })
+            summary["failed_runs"] += 1
+            summary["failures"].append(
+                {
+                    "partition": plabel,
+                    "body": target_body_name,
+                    "error": str(e),
+                }
+            )
 
     log_structured(logger, "scraper_complete", summary)
 
     # Run the transformation pipeline after successful scrape entries
-    if summary['successful_runs'] > 0:
+    if summary["successful_runs"] > 0:
         logger.info("Starting transformation pipeline...")
         try:
             pipeline = TransformationPipeline()
@@ -139,8 +179,8 @@ def main():
         except Exception as e:
             logger.error(f"Transformation pipeline failed: {e}")
 
-    sys.exit(0 if summary['failed_runs'] == 0 else 1)
+    sys.exit(0 if summary["failed_runs"] == 0 else 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -19,5 +19,5 @@ class DecisionItem(scrapy.Item):
     def to_dict(self):
         """Convert to dict, excluding binary document_content."""
         d = dict(self)
-        d.pop('document_content', None)
+        d.pop("document_content", None)
         return d

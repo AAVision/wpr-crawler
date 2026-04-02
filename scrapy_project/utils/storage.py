@@ -9,11 +9,11 @@ logger = logging.getLogger(__name__)
 
 class MinIOStorage:
     def __init__(self):
-        self.endpoint = os.getenv('MINIO_ENDPOINT', 'localhost:9000')
-        self.access_key = os.getenv('MINIO_ACCESS_KEY', 'minioadmin')
-        self.secret_key = os.getenv('MINIO_SECRET_KEY', 'minioadmin')
-        self.secure = os.getenv('MINIO_SECURE', 'false').lower() == 'true'
-        self.bucket_name = os.getenv('MINIO_LANDING_BUCKET', 'landing-zone')
+        self.endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9000")
+        self.access_key = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
+        self.secret_key = os.getenv("MINIO_SECRET_KEY", "minioadmin")
+        self.secure = os.getenv("MINIO_SECURE", "false").lower() == "true"
+        self.bucket_name = os.getenv("MINIO_LANDING_BUCKET", "landing-zone")
         self.client = Minio(
             self.endpoint,
             access_key=self.access_key,
@@ -26,7 +26,13 @@ class MinIOStorage:
             self.client.make_bucket(self.bucket_name)
             logger.info(f"Created bucket: {self.bucket_name}")
 
-    def upload_file(self, object_path, content, content_length=None, content_type='application/octet-stream'):
+    def upload_file(
+        self,
+        object_path,
+        content,
+        content_length=None,
+        content_type="application/octet-stream",
+    ):
         """Upload content to MinIO.
 
         Args:
@@ -82,29 +88,33 @@ class MinIOStorage:
 
 class MongoDBStorage:
     def __init__(self):
-        self.uri = os.getenv('MONGO_URI', 'mongodb://localhost:27017')
-        self.db_name = os.getenv('MONGO_DB', 'workplace_relations')
-        self.collection_name = os.getenv('MONGO_LANDING_COLLECTION', 'landing_documents')
+        self.uri = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+        self.db_name = os.getenv("MONGO_DB", "workplace_relations")
+        self.collection_name = os.getenv(
+            "MONGO_LANDING_COLLECTION", "landing_documents"
+        )
         self.client = MongoClient(self.uri)
         self.db = self.client[self.db_name]
         self.collection = self.db[self.collection_name]
         self._create_indexes()
 
     def _create_indexes(self):
-        self.collection.create_index('identifier', unique=True)
-        self.collection.create_index('file_hash')
-        self.collection.create_index('date')
-        self.collection.create_index('partition_date')
-        self.collection.create_index('body')
+        self.collection.create_index("identifier", unique=True)
+        self.collection.create_index("file_hash")
+        self.collection.create_index("date")
+        self.collection.create_index("partition_date")
+        self.collection.create_index("body")
 
     def find_by_identifier(self, identifier):
-        return self.collection.find_one({'identifier': identifier})
+        return self.collection.find_one({"identifier": identifier})
 
     def find_by_date_range(self, start_date, end_date):
-        return list(self.collection.find({'date': {'$gte': start_date, '$lte': end_date}}))
+        return list(
+            self.collection.find({"date": {"$gte": start_date, "$lte": end_date}})
+        )
 
     def find_by_partition(self, partition_date):
-        return list(self.collection.find({'partition_date': partition_date}))
+        return list(self.collection.find({"partition_date": partition_date}))
 
     def insert_document(self, doc):
         try:
@@ -116,7 +126,7 @@ class MongoDBStorage:
 
     def update_by_identifier(self, identifier, doc):
         result = self.collection.update_one(
-            {'identifier': identifier}, {'$set': doc}, upsert=False
+            {"identifier": identifier}, {"$set": doc}, upsert=False
         )
         return result.modified_count > 0
 

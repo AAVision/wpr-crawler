@@ -3,9 +3,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BOT_NAME = 'wr_scraper'
-SPIDER_MODULES = ['scrapy_project.spiders']
-NEWSPIDER_MODULE = 'scrapy_project.spiders'
+BOT_NAME = "wr_scraper"
+SPIDER_MODULES = ["scrapy_project.spiders"]
+NEWSPIDER_MODULE = "scrapy_project.spiders"
 
 # ============================================================
 # HYBRID DOWNLOAD STRATEGY
@@ -47,9 +47,9 @@ USER_AGENT = None
 # ============================================================
 ROBOTSTXT_OBEY = False
 
-CONCURRENT_REQUESTS = int(os.getenv('CONCURRENT_REQUESTS', 4))
+CONCURRENT_REQUESTS = int(os.getenv("CONCURRENT_REQUESTS", 4))
 CONCURRENT_REQUESTS_PER_DOMAIN = 2
-DOWNLOAD_DELAY = float(os.getenv('REQUEST_DELAY', 3.0))
+DOWNLOAD_DELAY = float(os.getenv("REQUEST_DELAY", 3.0))
 
 # Randomize delay between 50%-150% of DOWNLOAD_DELAY to look human
 RANDOMIZE_DOWNLOAD_DELAY = True
@@ -63,10 +63,10 @@ AUTOTHROTTLE_DEBUG = False
 
 # Retry on Cloudflare-specific codes
 RETRY_ENABLED = True
-RETRY_TIMES = int(os.getenv('RETRY_TIMES', 5))
+RETRY_TIMES = int(os.getenv("RETRY_TIMES", 5))
 RETRY_HTTP_CODES = [403, 429, 500, 502, 503, 504, 408, 520, 521, 522, 523, 524]
 
-DOWNLOAD_TIMEOUT = int(os.getenv('DOWNLOAD_TIMEOUT', 60))
+DOWNLOAD_TIMEOUT = int(os.getenv("DOWNLOAD_TIMEOUT", 60))
 
 # ============================================================
 # Browser Impersonation Profiles (for non-Playwright requests)
@@ -102,13 +102,13 @@ DOWNLOADER_MIDDLEWARES = {
 }
 
 SPIDER_MIDDLEWARES = {
-    'scrapy_project.middlewares.ErrorLoggingMiddleware': 543,
+    "scrapy_project.middlewares.ErrorLoggingMiddleware": 543,
 }
 
 ITEM_PIPELINES = {
-    'scrapy_project.pipelines.HashCalculationPipeline': 100,
-    'scrapy_project.pipelines.MinIOStoragePipeline': 200,
-    'scrapy_project.pipelines.MongoDBPipeline': 300,
+    "scrapy_project.pipelines.HashCalculationPipeline": 100,
+    "scrapy_project.pipelines.MinIOStoragePipeline": 200,
+    "scrapy_project.pipelines.MongoDBPipeline": 300,
 }
 
 # ============================================================
@@ -121,29 +121,31 @@ COOKIES_DEBUG = False
 # Default Headers
 # ============================================================
 DEFAULT_REQUEST_HEADERS = {
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Upgrade-Insecure-Requests': '1',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'none',
-    'Sec-Fetch-User': '?1',
-    'Cache-Control': 'max-age=0',
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Cache-Control": "max-age=0",
 }
 
-LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
-LOG_FORMAT = '%(asctime)s [%(name)s] %(levelname)s: %(message)s'
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+LOG_FORMAT = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
 
 # Set DEPTH_LIMIT to 0 for unlimited pagination depth (necessary for many pages of results)
 DEPTH_LIMIT = 0
-REQUEST_FINGERPRINTER_IMPLEMENTATION = '2.7'
+REQUEST_FINGERPRINTER_IMPLEMENTATION = "2.7"
 
 # ============================================================
 # Proxy Support (optional but recommended for production)
 # ============================================================
-PROXY_ENABLED = os.getenv('PROXY_ENABLED', 'false').lower() == 'true'
+PROXY_ENABLED = os.getenv("PROXY_ENABLED", "false").lower() == "true"
 if PROXY_ENABLED:
-    DOWNLOADER_MIDDLEWARES['scrapy.downloadermiddlewares.httpproxy.HttpProxyMiddleware'] = 750
-    PROXY_URL = os.getenv('PROXY_URL')
+    DOWNLOADER_MIDDLEWARES[
+        "scrapy.downloadermiddlewares.httpproxy.HttpProxyMiddleware"
+    ] = 750
+    PROXY_URL = os.getenv("PROXY_URL")
