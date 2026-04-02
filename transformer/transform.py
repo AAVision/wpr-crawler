@@ -51,7 +51,7 @@ class TransformationPipeline:
         self.transformed_meta.create_index('transformed_at')
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    def run(self, start_date: str = None, end_date: str = None) -> Dict:
+    def run(self, start_date: str = None, end_date: str = None, max_workers: int = None) -> Dict:
         logger.info(f"Starting transformation pipeline from {start_date} to {end_date}")
 
         # Build query
@@ -77,26 +77,39 @@ class TransformationPipeline:
         df = pl.DataFrame(docs)
         logger.info(f"Loaded {len(df)} documents into Polars DataFrame")
 
+        # Use ThreadPoolExecutor for concurrent I/O (MinIO downloads/uploads)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        if max_workers is None:
+            max_workers = int(os.getenv('TRANSFORM_MAX_WORKERS', '10'))
         stats = {'total': len(df), 'transformed': 0, 'skipped': 0, 'failed': 0}
         bulk_ops = []
 
-        # Process each row
-        for row in df.iter_rows(named=True):
-            try:
-                # _transform_document now returns the update operation instead of performing it
-                op_result = self._transform_document(row)
-                if op_result:
-                    if isinstance(op_result, UpdateOne):
-                        bulk_ops.append(op_result)
-                        stats['transformed'] += 1
+        logger.info(f"Starting concurrent transformation with {max_workers} workers...")
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Map each row to a transformation task
+            future_to_id = {
+                executor.submit(self._transform_document, row): row.get('identifier')
+                for row in df.iter_rows(named=True)
+            }
+            
+            for future in as_completed(future_to_id):
+                identifier = future_to_id[future]
+                try:
+                    op_result = future.result()
+                    if op_result:
+                        if isinstance(op_result, UpdateOne):
+                            bulk_ops.append(op_result)
+                            stats['transformed'] += 1
+                        else:
+                            # returned True for skipped/already transformed
+                            stats['skipped'] += 1
                     else:
-                        # returned True for skipped/already transformed
                         stats['skipped'] += 1
-                else:
-                    stats['skipped'] += 1
-            except Exception as e:
-                stats['failed'] += 1
-                logger.error(f"Failed to transform {row.get('identifier')}: {e}")
+                except Exception as e:
+                    stats['failed'] += 1
+                    logger.error(f"Failed to transform {identifier}: {e}")
 
         # Execute all database updates in a single N+1-free roundtrip
         if bulk_ops:

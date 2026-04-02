@@ -133,7 +133,13 @@ def run_spider(start_date, end_date, body_id, body_name, partition_date):
         raise Exception(f"Scrapy failed for {body_name} [{partition_date}]: {result.stderr[-500:]}")
 
     # Try to parse stats from spider output (look for the run_summary JSON log)
-    stats = {"records_found": 0, "records_scraped": 0, "failed_downloads": []}
+    stats = {
+        "records_found": 0, 
+        "records_scraped": 0, 
+        "failed_downloads": [],
+        "start_date": start_date,
+        "end_date": end_date
+    }
     for line in result.stdout.split('\n'):
         if '"event": "run_summary"' in line or '"event":"run_summary"' in line:
             try:

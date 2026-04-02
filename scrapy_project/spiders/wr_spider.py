@@ -50,13 +50,13 @@ class WorkplaceRelationsSpider(scrapy.Spider):
         # Format dates for URL params (DD/MM/YYYY)
         if start_date:
             start_dt = datetime.strptime(start_date, '%Y-%m-%d')
-            self.start_date_formatted = start_dt.strftime('%-d/%-m/%Y')
+            self.start_date_formatted = start_dt.strftime('%d/%m/%Y')
         else:
             self.start_date_formatted = None
 
         if end_date:
             end_dt = datetime.strptime(end_date, '%Y-%m-%d')
-            self.end_date_formatted = end_dt.strftime('%-d/%-m/%Y')
+            self.end_date_formatted = end_dt.strftime('%d/%m/%Y')
         else:
             self.end_date_formatted = None
 
@@ -181,9 +181,11 @@ class WorkplaceRelationsSpider(scrapy.Spider):
         found_on_page = 0
         for item in result_items:
             try:
-                # URL from the title link or the button
+                # Robust link selection: try both known classes and fallback to any primary button link
                 href = item.css('h2.title a::attr(href)').get() or \
-                       item.css('a.btn-primary::attr(href)').get()
+                       item.css('a.view-decision::attr(href)').get() or \
+                       item.css('a.btn-primary::attr(href)').get() or \
+                       item.css('a::attr(href)').get()
 
                 if not href or '/en/cases/' not in href:
                     continue
