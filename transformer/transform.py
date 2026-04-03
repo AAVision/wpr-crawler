@@ -93,10 +93,13 @@ class TransformationPipeline:
             return {"total": 0, "transformed": 0, "skipped": 0, "failed": 0}
 
         def robust_date_parse(d_str):
-            if not d_str: return None
+            if not d_str: 
+                return None
             for fmt in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"]:
-                try: return datetime.strptime(str(d_str)[:19], fmt)
-                except ValueError: continue
+                try:
+                    return datetime.strptime(str(d_str)[:19], fmt)
+                except ValueError: 
+                    continue
             return None
 
         sd_dt = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None

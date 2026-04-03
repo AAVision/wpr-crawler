@@ -34,9 +34,6 @@ PLAYWRIGHT_LAUNCH_OPTIONS = {
     ],
 }
 
-# Block unnecessary assets in Playwright to save bandwidth and CPU
-PLAYWRIGHT_ABORT_REQUEST = lambda request: request.resource_type in ["image", "font", "stylesheet", "media"]
-
 # Increase timeouts to handle slow server responses/Cloudflare validation
 PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 120000
 DOWNLOAD_TIMEOUT = 120

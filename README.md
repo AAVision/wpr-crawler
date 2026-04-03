@@ -2,6 +2,8 @@
 
 A production-grade pipeline to scrape Irish legal decisions, store them in MinIO, and transform HTML content.
 
+![Dagster Orchestration Diagram](dragster.png)
+
 ## Dashboards & Monitoring
 
 After starting the infrastructure with `docker compose up -d`, the following tools are available:
@@ -28,6 +30,22 @@ After starting the infrastructure with `docker compose up -d`, the following too
 - Idempotent: uses file hashes to avoid duplicates.
 - Orchestrated with Dagster.
 
+## Database & Storage Architecture
+
+The pipeline uses a decoupled storage architecture to maintain a robust data lake.
+
+### MongoDB (`workplace_relations`)
+Stores all metadata, tracking states, and parsed data.
+- **`landing_documents`**: Stores the raw metadata from the Scrapy spiders.
+  - Core fields: `identifier`, `title`, `date` (stored as `YYYY-MM-DD` string), `body` (tribunal name).
+  - Storage mapping: `file_path`, `file_hash`, `document_type`, `version`.
+- **`transformed_documents`**: Stores final processed documents after `transform.py` unifies them.
+
+### MinIO (`wrc-data`)
+Object storage acts as our Data Lake for raw files. Documents are dynamically partitioned based on their historical decision dates.
+- **Bucket**: `wrc-data`
+- **Structure**: `{body_name}/{YYYY-MM}/{identifier}.{ext}` (e.g., `Workplace_Relations_Commission/2000-03/ADJ-0001.html`)
+
 ## Configuration
 
 All settings via environment variables (`.env`) or `config.yaml`.
@@ -49,7 +67,4 @@ docker compose run --rm dagster-webserver \
 
 # Or run the full orchestrated scraper (all bodies, monthly partitions)
 docker compose run --rm scraper python /opt/dagster/scripts/run_scraper.py --start-date 2017-01-01 --end-date 2017-01-31
-
-
-Total Expected: 269
 ```

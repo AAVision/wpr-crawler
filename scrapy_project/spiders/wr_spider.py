@@ -89,7 +89,7 @@ class WorkplaceRelationsSpider(scrapy.Spider):
         try:
             start_dt = datetime.strptime(self.start_date, "%Y-%m-%d")
             end_dt = datetime.strptime(self.end_date, "%Y-%m-%d")
-        except:
+        except Exception:
             # Safe fallbacks if parsing fails
             start_dt = datetime.now() - timedelta(days=30)
             end_dt = datetime.now()
@@ -221,7 +221,8 @@ class WorkplaceRelationsSpider(scrapy.Spider):
         text_chunk = response.text[:20000] # Increased range
         for p in patterns:
             match = re.search(p, text_chunk, re.IGNORECASE)
-            if match: return match.group(1)
+            if match:
+                return match.group(1)
         return None
 
     def _extract_date_from_url(self, url):
@@ -239,10 +240,13 @@ class WorkplaceRelationsSpider(scrapy.Spider):
         return None
 
     def _parse_date(self, date_str):
-        if not date_str: return None
+        if not date_str:
+            return None
         for fmt in ["%d/%m/%Y", "%d %B %Y", "%d-%m-%Y", "%Y-%m-%d"]:
-            try: return datetime.strptime(date_str.strip(), fmt)
-            except ValueError: continue
+            try:
+                return datetime.strptime(date_str.strip(), fmt)
+            except ValueError: 
+                continue
         return None
 
     def _get_document_url(self, response):

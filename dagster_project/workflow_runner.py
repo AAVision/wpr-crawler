@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 
 from transformer.transform import TransformationPipeline
-from utils.logging_utils import setup_logging, log_structured
+from utils.logging_utils import setup_logging
 
 logger = setup_logging(__name__)
 
