@@ -56,7 +56,7 @@ class WRDiscoveryEngine:
             await page.goto(url, wait_until="networkidle", timeout=60000)
             
             while True:
-                await page.wait_for_selector("li.each-item, .results-count", timeout=30000)
+                await page.wait_for_selector("li.each-item, .results-count", timeout=50000)
                 
                 # Extract
                 links = await page.eval_on_selector_all(

@@ -7,7 +7,6 @@ from typing import Optional, Dict
 from minio import Minio
 from pymongo import MongoClient, UpdateOne
 from tenacity import retry, stop_after_attempt, wait_exponential
-import polars as pl
 from .html_cleaner import HTMLCleaner
 from utils.logging_utils import setup_logging
 
@@ -93,8 +92,6 @@ class TransformationPipeline:
             logger.info(f"No documents found for query. Total documents in collection: {total_count}")
             return {"total": 0, "transformed": 0, "skipped": 0, "failed": 0}
 
-        # We remove Polars entirely to bypass ANY SchemaError from varying MongoDB documents
-        # and instead do robust filtering in pure Python
         def robust_date_parse(d_str):
             if not d_str: return None
             for fmt in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"]:

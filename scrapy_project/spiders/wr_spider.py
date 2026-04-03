@@ -117,7 +117,7 @@ class WorkplaceRelationsSpider(scrapy.Spider):
                     "body_id": bid,
                     "partition_date": current.strftime("%Y-%m"),
                     "playwright": True,
-                    "playwright_page_methods": [PageMethod("wait_for_selector", "li.each-item, .results-count", timeout=30000)],
+                    "playwright_page_methods": [PageMethod("wait_for_selector", "li.each-item, .results-count", timeout=50000)],
                 },
                 errback=self.handle_error,
             )

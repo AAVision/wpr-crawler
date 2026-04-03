@@ -26,7 +26,6 @@ After starting the infrastructure with `docker compose up -d`, the following too
 - Metadata stored in MongoDB.
 - Files stored in MinIO object storage.
 - Idempotent: uses file hashes to avoid duplicates.
-- Transformation script uses Polars for metadata processing and BeautifulSoup for HTML cleaning.
 - Orchestrated with Dagster.
 
 ## Configuration
@@ -49,7 +48,7 @@ docker compose run --rm dagster-webserver \
   -a partition_date=2025-01
 
 # Or run the full orchestrated scraper (all bodies, monthly partitions)
-docker compose run --rm scraper python /opt/dagster/scripts/run_scraper.py --start-date 2025-01-01 --end-date 2025-01-31
+docker compose run --rm scraper python /opt/dagster/scripts/run_scraper.py --start-date 2017-01-01 --end-date 2017-01-31
 
 
 Total Expected: 269
