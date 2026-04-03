@@ -66,5 +66,7 @@ docker compose run --rm dagster-webserver \
   -a partition_date=2025-01
 
 # Or run the full orchestrated scraper (all bodies, monthly partitions)
-docker compose run --rm scraper python /opt/dagster/scripts/run_scraper.py --start-date 2017-01-01 --end-date 2017-01-31
+docker compose run --rm scraper \
+python /opt/dagster/scripts/run_scraper.py\
+--start-date 2017-01-01 --end-date 2017-01-31
 ```
