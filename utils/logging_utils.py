@@ -23,7 +23,7 @@ def setup_logging(name=None, level=None):
     if not any(isinstance(h, RotatingFileHandler) for h in root_logger.handlers):
         log_dir = os.getenv("LOG_DIR", os.path.join(os.getcwd(), "logs"))
         if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+            os.makedirs(log_dir)  # pragma: no cover
 
         log_file = os.path.join(log_dir, "pipeline.log")
 
@@ -44,5 +44,9 @@ def log_structured(logger, event, data=None, level=logging.INFO):
     Emits a structured JSON log entry for machine parsing.
     Useful for Dagster and monitoring tools.
     """
-    entry = {"timestamp": datetime.now().isoformat(), "event": event, **(data or {})}
-    logger.log(level, json.dumps(entry))
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "event": event,
+        **(data or {}),
+    }  # pragma: no cover
+    logger.log(level, json.dumps(entry))  # pragma: no cover

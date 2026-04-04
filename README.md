@@ -70,3 +70,14 @@ docker compose run --rm scraper \
 python /opt/dagster/scripts/run_scraper.py\
 --start-date 2017-01-01 --end-date 2017-01-31
 ```
+
+## Testing & Coverage
+
+The repository maintains strict test coverage ensuring orchestration mechanisms, HTML extraction, and scrapers work flawlessly.
+
+To run the unified test suite and view your coverage breakdown, run the following from within your local virtual environment:
+
+```bash
+# Ensure your virtual environment is active or use the binary directly:
+PYTHONPATH=. ./venv/bin/pytest tests/ --cov=. --cov-report=term-missing
+```

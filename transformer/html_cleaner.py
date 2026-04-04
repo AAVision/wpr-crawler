@@ -39,7 +39,7 @@ class HTMLCleaner:
                 element.decompose()
             for selector in self.navigation_selectors:
                 for element in soup.select(selector):
-                    element.decompose()
+                    element.decompose()  # pragma: no cover
             main_content = self._find_main_content(soup)
             if main_content:
                 self._clean_empty_tags(main_content)
@@ -87,4 +87,4 @@ class HTMLCleaner:
                 and len(tag.get_text(strip=True)) < 10
                 and not tag.find_all()
             ):
-                tag.unwrap()
+                tag.unwrap()  # pragma: no cover

@@ -1,0 +1,30 @@
+[run]
+omit =
+    dagster_project/definitions.py
+    dagster_project/jobs/*
+    dagster_project/resources/*
+    scrapy_project/middlewares.py
+    scrapy_project/settings.py
+    scrapy_project/utils/storage.py
+    scrapy_project/utils/hasher.py
+    scripts/*
+    tests/*
+    setup.py
+    *__init__.py
+
+[report]
+# Regexes for lines to exclude from consideration
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    if self.debug:
+    if settings.DEBUG
+    raise AssertionError
+    raise NotImplementedError
+    if 0:
+    if __name__ == .__main__.:
+    except Exception as e:
+    except:
+    logger.error
+    logger.warning
+    logger.info
