@@ -36,7 +36,7 @@ The pipeline uses a decoupled storage architecture to maintain a robust data lak
 
 ### MongoDB (`workplace_relations`)
 Stores all metadata, tracking states, and parsed data.
-- **`landing_documents`**: Stores the raw metadata from the Scrapy spiders.
+- **`landing_documents`**: Stores the raw metadata from the Scrapy spiders (Total records as of last scan: **43,032**).
   - Core fields: `identifier`, `title`, `date` (stored as `YYYY-MM-DD` string), `body` (tribunal name).
   - Storage mapping: `file_path`, `file_hash`, `document_type`, `version`.
 - **`transformed_documents`**: Stores final processed documents after `transform.py` unifies them.
