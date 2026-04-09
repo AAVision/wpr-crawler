@@ -76,6 +76,7 @@ services:
 
   scraper:
     build: .
+    image: wr-data-pipeline:latest
     profiles: ["cli"]
     shm_size: '2gb'
     depends_on:
@@ -103,6 +104,7 @@ services:
 
   dagster-webserver:
     build: .
+    image: wr-data-pipeline:latest
     container_name: wr_dagster_webserver
     shm_size: '2gb'
     depends_on:
@@ -134,6 +136,7 @@ services:
 
   dagster-daemon:
     build: .
+    image: wr-data-pipeline:latest
     container_name: wr_dagster_daemon
     shm_size: '2gb'
     depends_on:

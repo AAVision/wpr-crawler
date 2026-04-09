@@ -6,20 +6,12 @@ from dagster import (
     DynamicOut,
     DynamicOutput,
     Any,
-)  # pragma: no cover
-from dagster_project.workflow_runner import run_workflow  # pragma: no cover
-from transformer.transform import TransformationPipeline  # pragma: no cover
+)
+from dagster_project.workflow_runner import run_workflow
+from transformer.transform import TransformationPipeline
+from utils.metadata import BODIES
 
-# Correct default bodies
-DEFAULT_BODIES = [  # pragma: no cover
-    {"id": "1", "name": "Employment Appeals Tribunal"},
-    {"id": "2", "name": "Equality Tribunal"},
-    {"id": "3", "name": "Labour Court"},
-    {"id": "15376", "name": "Workplace Relations Commission"},
-]
-
-
-@op(  # pragma: no cover
+@op(
     config_schema={
         "start_date": Field(String, default_value="2020-01-01"),
         "end_date": Field(String, default_value="2020-12-31"),
@@ -29,97 +21,86 @@ DEFAULT_BODIES = [  # pragma: no cover
         "max_workers": Field(Int, is_required=False),
     }
 )
-def unified_pipeline_op(context):  # pragma: no cover
+def unified_pipeline_op(context):
     """The consolidated op that performs everything in one high-performance run."""
-    config = context.op_config  # pragma: no cover
+    config = context.op_config
 
-    if config.get("bodies"):  # pragma: no cover
-        body_id = ",".join(
-            [str(b.get("id")) for b in config["bodies"] if b.get("id")]
-        )  # pragma: no cover
-    elif config.get("body_id"):  # pragma: no cover
-        body_id = config["body_id"]  # pragma: no cover
+    if config.get("bodies"):
+        body_id = ",".join([str(b.get("id")) for b in config["bodies"] if b.get("id")])
+    elif config.get("body_id"):
+        body_id = config["body_id"]
     else:
-        body_id = "all"  # pragma: no cover
+        body_id = "all"
 
-    summary = run_workflow(  # pragma: no cover
+    summary = run_workflow(
         start_date=config["start_date"],
         end_date=config["end_date"],
         body_id=body_id,
         partition_months=config["partition_months"],
     )
 
-    if summary["status"] == "Failed":  # pragma: no cover
-        raise Exception(
-            f"Pipeline FAILED for {summary.get('body')}"
-        )  # pragma: no cover
+    if summary["status"] == "Failed":
+        raise Exception(f"Pipeline FAILED: {summary}")
 
-    return summary  # pragma: no cover
+    return summary
 
 
-@op(  # pragma: no cover
+@op(
     config_schema={
         "start_date": Field(String, default_value="2020-01-01"),
         "end_date": Field(String, default_value="2020-12-31"),
-        "bodies": Field([Any], default_value=DEFAULT_BODIES),
+        "bodies": Field([Any], default_value=BODIES),
     },
     out=DynamicOut(),
 )
-def generate_scrape_tasks(context):  # pragma: no cover
-    """Legacy-compatible op for body/partition task generation."""
-    bodies = context.op_config.get("bodies", DEFAULT_BODIES)  # pragma: no cover
+def generate_scrape_tasks(context):
+    """Task generation for body-level parallelism."""
+    bodies = context.op_config.get("bodies", BODIES)
 
-    for body in bodies:  # pragma: no cover
-        task_data = {  # pragma: no cover
+    for body in bodies:
+        task_data = {
             **body,
             "start_date": context.op_config["start_date"],
             "end_date": context.op_config["end_date"],
         }
-        yield DynamicOutput(
-            value=task_data, mapping_key=f"body_{body['id']}"
-        )  # pragma: no cover
+        yield DynamicOutput(value=task_data, mapping_key=f"body_{body['id']}")
 
 
-@op  # pragma: no cover
-def scrape_body_partition(context, task_data: dict):  # pragma: no cover
-    """Scrape ONLY without transformation for parallel safety."""
-    summary = run_workflow(  # pragma: no cover
+@op
+def scrape_body_partition(context, task_data: dict):
+    """Parallelized scrape worker."""
+    summary = run_workflow(
         start_date=task_data["start_date"],
         end_date=task_data["end_date"],
         body_id=task_data["id"],
-        skip_transform=True,  # WAIT for bulk transform
+        skip_transform=True,
     )
 
-    if summary["status"] == "Failed":  # pragma: no cover
-        raise Exception(
-            f"Body scrape for {task_data.get('name')} FAILED"
-        )  # pragma: no cover
+    if summary["status"] == "Failed":
+        raise Exception(f"Body scrape for {task_data.get('name')} FAILED")
 
-    return summary  # pragma: no cover
+    return summary
 
 
-@op(  # pragma: no cover
+@op(
     config_schema={
         "start_date": Field(String, default_value="2020-01-01"),
         "end_date": Field(String, default_value="2020-12-31"),
         "max_workers": Field(Int, default_value=10),
     }
 )
-def bulk_transform_op(context, scrape_results: list):  # pragma: no cover
-    """Performs transformation for the whole date range AFTER all scrapes finish."""
-    config = context.op_config  # pragma: no cover
+def bulk_transform_op(context, scrape_results: list):
+    """Bulk transformation after parallel scrapes finish."""
+    config = context.op_config
 
-    context.log.info(
-        f"All scrapes complete. Starting bulk transformation for {config['start_date']} to {config['end_date']}"
-    )  # pragma: no cover
+    context.log.info(f"Scrapes complete. Running bulk transform ({config['start_date']} to {config['end_date']})")
 
-    pipeline = TransformationPipeline()  # pragma: no cover
-    try:  # pragma: no cover
-        stats = pipeline.run(  # pragma: no cover
+    pipeline = TransformationPipeline()
+    try:
+        return pipeline.run(
             start_date=config["start_date"],
             end_date=config["end_date"],
             max_workers=config["max_workers"],
         )
-        return stats  # pragma: no cover
     finally:
-        pipeline.close()  # pragma: no cover
+        pipeline.close()

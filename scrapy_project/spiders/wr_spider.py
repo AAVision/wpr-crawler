@@ -1,320 +1,215 @@
 import scrapy
-from scrapy.http import HtmlResponse
-from urllib.parse import urljoin, urlencode
 import re
-import os
-import json
 import random
+import json
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
+from urllib.parse import urlencode
 
+from scrapy.http import HtmlResponse
 from scrapy_project.items import DecisionItem
 from scrapy_project.settings import IMPERSONATE_BROWSERS
 from scrapy_playwright.page import PageMethod
 from utils.logging_utils import setup_logging
+from utils.metadata import BODIES, get_body_name
 
-# Centralized Logging
+# Standardized logging
 logger = setup_logging(__name__)
 
-
 class WorkplaceRelationsSpider(scrapy.Spider):
+    """
+    Highly concurrent WRC Spider using Scrapy benchmarks.
+    Optimizes partition discovery and document extraction.
+    """
     name = "wr_spider"
     allowed_domains = ["workplacerelations.ie"]
     base_url = "https://www.workplacerelations.ie"
     search_base = f"{base_url}/en/search/"
 
-    # Correct body IDs from the actual website
-    BODY_MAP = {
-        "1": "Employment Appeals Tribunal",
-        "2": "Equality Tribunal",
-        "3": "Labour Court",
-        "15376": "Workplace Relations Commission",
-    }
-
-    def __init__(
-        self,
-        start_date=None,
-        end_date=None,
-        body_id=None,
-        body_name=None,
-        partition_date=None,
-        partition_months=1,
-        url_list_file=None,
-        **kwargs,
-    ):
+    def __init__(self, start_date=None, end_date=None, body_id="all", partition_months=1, **kwargs):
         super().__init__(**kwargs)
         self.start_date = start_date
         self.end_date = end_date
-        self.body_id = str(body_id) if body_id else "all"
-        self.body_name = body_name or self.BODY_MAP.get(self.body_id, self.body_id)
-        self.partition_date = partition_date or datetime.now().strftime("%Y-%m")
+        self.body_id = str(body_id)
         self.partition_months = int(partition_months or 1)
-        self.url_list_file = url_list_file
-
-        # Stats tracking
-        self._stats = {
-            "records_found": 0,
-            "records_scraped": 0,
-            "records_skipped_duplicate": 0,
-            "downloads_failed": [],
-            "pages_crawled": 0,
-        }
 
     def start_requests(self):
-        """Phase 2: Use discovered URLs or fallback to internal discovery."""
-        if self.url_list_file and os.path.exists(self.url_list_file):
-            with open(self.url_list_file, "r") as f:
-                urls = json.load(f)
+        """
+        Entry point: Multi-month concurrent discovery.
+        Each monthly partition is fired as a separate high-priority request.
+        """
+        for p_start, p_end in self._date_partitions():
+            yield self._request_search_page(p_start, p_end)
 
-            self.logger.info(f"Extracting {len(urls)} URLs from pre-discovered list.")
-            for url in urls:
-                self._stats["records_found"] += 1
-                yield scrapy.Request(
-                    url=url,
-                    callback=self.parse_decision_detail,
-                    meta={
-                        "impersonate": random.choice(IMPERSONATE_BROWSERS),
-                        "partition_date": self.partition_date,
-                        "body_id": self.body_id,
-                    },
-                    errback=self.handle_error,
-                )
-            return
+    def _date_partitions(self):
+        """Generator for monthly chunks."""
+        try:
+            current = datetime.strptime(self.start_date, "%Y-%m-%d").replace(day=1)
+            end_dt = datetime.strptime(self.end_date, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            current = (datetime.now() - timedelta(days=30)).replace(day=1)
+            end_dt = datetime.now()
 
-        # Fallback to internal discovery
-        bid = (
-            self.body_id
-            if self.body_id and self.body_id.lower() != "all"
-            else ",".join(self.BODY_MAP.keys())
-        )  # pragma: no cover
-        # Use more robust body params (body=1&body=2...)
-        bid_list = bid.split(",")  # pragma: no cover
+        while current <= end_dt:
+            p_start = current
+            p_end = min(current + relativedelta(months=self.partition_months) - timedelta(days=1), end_dt)
+            yield p_start, p_end
+            current += relativedelta(months=self.partition_months)
 
-        # Monthly partitions
-        try:  # pragma: no cover
-            start_dt = datetime.strptime(
-                self.start_date, "%Y-%m-%d"
-            )  # pragma: no cover
-            end_dt = datetime.strptime(self.end_date, "%Y-%m-%d")  # pragma: no cover
-        except Exception:  # pragma: no cover
-            # Safe fallbacks if parsing fails
-            start_dt = datetime.now() - timedelta(days=30)  # pragma: no cover
-            end_dt = datetime.now()  # pragma: no cover
+    def _request_search_page(self, start, end):
+        """Builds the search query URL and Scrapy Request."""
+        target_ids = [b["id"] for b in BODIES] if self.body_id.lower() == "all" else [self.body_id]
+        
+        query = [("decisions", "1"), ("from", start.strftime("%d/%m/%Y")), ("to", end.strftime("%d/%m/%Y"))]
+        for bid in target_ids:
+            query.append(("body", bid.strip()))
 
-        current = start_dt.replace(day=1)  # pragma: no cover
-        while current <= end_dt:  # pragma: no cover
-            p_start = current  # pragma: no cover
-            p_end = min(
-                current
-                + relativedelta(months=self.partition_months)
-                - timedelta(days=1),
-                end_dt,
-            )  # pragma: no cover
-
-            # Construct complex params list for urlencode(doseq=True)
-            params = [  # pragma: no cover
-                ("decisions", "1"),
-                ("from", p_start.strftime("%d/%m/%Y")),
-                ("to", p_end.strftime("%d/%m/%Y")),
-            ]
-            for b in bid_list:  # pragma: no cover
-                params.append(("body", b.strip()))  # pragma: no cover
-
-            url = f"{self.search_base}?{urlencode(params)}"  # pragma: no cover
-            yield scrapy.Request(  # pragma: no cover
-                url=url,
-                callback=self.parse_search_results,
-                meta={
-                    "page_number": 1,
-                    "body_id": bid,
-                    "partition_date": current.strftime("%Y-%m"),
-                    "playwright": True,
-                    "playwright_page_methods": [
-                        PageMethod(
-                            "wait_for_selector",
-                            "li.each-item, .results-count",
-                            timeout=50000,
-                        )
-                    ],
-                },
-                errback=self.handle_error,
-            )
-            current += relativedelta(months=self.partition_months)  # pragma: no cover
+        return scrapy.Request(
+            url=f"{self.search_base}?{urlencode(query)}",
+            callback=self.parse_search_results,
+            meta={
+                "body_id": ",".join(target_ids),
+                "partition": start.strftime("%Y-%m"),
+                "playwright": True,
+                "playwright_page_methods": [
+                    PageMethod("wait_for_selector", "li.each-item, .results-count", timeout=60000)
+                ],
+            },
+            priority=100, # Discovery is priority #1
+            errback=self.handle_error
+        )
 
     def parse_search_results(self, response: HtmlResponse):
-        """Parse search result listing page."""
-        self._stats["pages_crawled"] += 1
-        page_num = response.meta.get("page_number", 1)
-
-        # Pagination
-        next_link = response.css("a.next::attr(href)").get()
-        if next_link:
-            yield scrapy.Request(
-                url=response.urljoin(next_link),
+        """Parses the search result list and depth-first pagination."""
+        self.crawler.stats.inc_value("wrc/pages_crawled")
+        
+        # Immediate Pagination Follow
+        next_btn = response.css("a.next::attr(href)").get()
+        if next_btn:
+            yield response.follow(
+                next_btn,
                 callback=self.parse_search_results,
-                meta={
-                    **response.meta,
-                    "page_number": page_num + 1,
-                },
-                errback=self.handle_error,
+                meta=response.meta,
+                priority=110, # Deep discovery gets top priority
+                dont_filter=True
             )
 
-        # Extraction from page
-        for item in response.css("li.each-item"):  # pragma: no cover
-            href = (
-                item.css("a.btn-primary::attr(href)").get()
-                or item.css("h2.title a::attr(href)").get()
-            )  # pragma: no cover
-            if href:  # pragma: no cover
-                full_url = urljoin(self.base_url, href)  # pragma: no cover
-                self._stats["records_found"] += 1  # pragma: no cover
-                yield scrapy.Request(  # pragma: no cover
-                    url=full_url,
+        # Dispatch Case Extractions
+        for row in response.css("li.each-item"):
+            href = row.css("a.btn-primary::attr(href)").get() or row.css("h2.title a::attr(href)").get()
+            if href:
+                self.crawler.stats.inc_value("wrc/links_discovered")
+                yield scrapy.Request(
+                    url=response.urljoin(href),
                     callback=self.parse_decision_detail,
                     meta={
-                        "identifier": item.css("h2.title a::text").get("").strip(),
-                        "date_text": item.css("span.date::text").get("").strip(),
+                        "identifier": row.css("h2.title a::text").get("").strip(),
+                        "date_text": row.css("span.date::text").get("").strip(),
                         "body_id": response.meta.get("body_id"),
+                        "partition": response.meta.get("partition"),
                         "impersonate": random.choice(IMPERSONATE_BROWSERS),
-                        "partition_date": response.meta.get("partition_date"),
                     },
-                    errback=self.handle_error,
+                    priority=50, # Extraction is priority #2
+                    errback=self.handle_error
                 )
 
     def parse_decision_detail(self, response: HtmlResponse):
-        """Parse case detail page with fallback and URL date extraction."""
-        identifier = response.meta.get("identifier") or self._extract_identifier(
-            response
-        )
-        date_text = response.meta.get("date_text") or self._extract_date(response)
-        date = self._parse_date(date_text)
+        """Final case data extraction and document dispatch."""
+        identifier = response.meta.get("identifier") or self._utils_extract_id(response)
+        date = self._utils_resolve_date(response)
+        doc_url, doc_type = self._utils_get_doc_meta(response)
 
-        # If still no date, extract from URL (e.g. /cases/2001/january/)
-        if not date:
-            date = self._extract_date_from_url(response.url)  # pragma: no cover
-            if date:  # pragma: no cover
-                logger.info(
-                    f"Salvagged date from URL for {identifier}: {date.strftime('%Y-%m-%d')}"
-                )
+        item = DecisionItem()
+        item.update({
+            "identifier": identifier,
+            "title": identifier,
+            "date": date.strftime("%Y-%m-%d") if date else None,
+            "body": get_body_name(response.meta.get("body_id")),
+            "link_to_doc": doc_url or response.url,
+            "partition_date": date.strftime("%Y-%m") if date else response.meta.get("partition"),
+            "source_url": response.url,
+            "scraped_at": datetime.now().isoformat(),
+            "document_type": doc_type or "html"
+        })
 
-        doc_url, doc_type = self._get_document_url(response)
-
-        # Body name mapping
-        bid = response.meta.get("body_id") or self.body_id  # pragma: no cover
-        if bid and "," in str(bid):  # pragma: no cover
-            body_name = "Workplace Relations"  # pragma: no cover
-        else:
-            body_name = self.BODY_MAP.get(
-                str(bid), "Workplace Relations"
-            )  # pragma: no cover
-
-        item = DecisionItem()  # pragma: no cover
-        item["identifier"] = identifier  # pragma: no cover
-        item["title"] = identifier  # pragma: no cover
-        item["date"] = date.strftime("%Y-%m-%d") if date else None  # pragma: no cover
-        item["body"] = body_name  # pragma: no cover
-        item["link_to_doc"] = doc_url or response.url  # pragma: no cover
-        item["partition_date"] = (
-            date.strftime("%Y-%m") if date else response.meta.get("partition_date")
-        )  # pragma: no cover
-        item["source_url"] = response.url  # pragma: no cover
-        item["scraped_at"] = datetime.now().isoformat()  # pragma: no cover
-        item["document_type"] = doc_type or "html"  # pragma: no cover
-
-        if doc_url and doc_type in ("pdf", "doc", "docx"):  # pragma: no cover
-            yield scrapy.Request(  # pragma: no cover
+        if doc_url and doc_type in ("pdf", "doc", "docx"):
+            yield scrapy.Request(
                 url=doc_url,
-                callback=self.save_document,
+                callback=self.save_binary,
                 meta={"item": item, "impersonate": random.choice(IMPERSONATE_BROWSERS)},
                 errback=self.handle_download_error,
-                dont_filter=True,
+                dont_filter=True
             )
         else:
-            item["document_content"] = response.body  # pragma: no cover
-            self._stats["records_scraped"] += 1  # pragma: no cover
-            yield item  # pragma: no cover
+            item["document_content"] = response.body
+            self.crawler.stats.inc_value("wrc/records_scraped")
+            yield item
 
-    def save_document(self, response: HtmlResponse):
+    def save_binary(self, response):
+        """Final handler for non-HTML artifacts."""
         item = response.meta["item"]
-        item["document_content"] = response.body  # pragma: no cover
-        self._stats["records_scraped"] += 1  # pragma: no cover
-        yield item  # pragma: no cover
+        item["document_content"] = response.body
+        self.crawler.stats.inc_value("wrc/records_scraped")
+        yield item
 
-    def _extract_identifier(self, response):
-        return response.url.rstrip("/").split("/")[-1].upper()
+    # --- Utility Helpers ---
 
-    def _extract_date(self, response):
-        patterns = [
-            r"(\d{2}/\d{2}/\d{4})",
-            r"(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})",
-            r"(\d{2}-\d{2}-\d{4})",
-        ]
-        text_chunk = response.text[:20000]  # Increased range
+    def _utils_resolve_date(self, response):
+        dt = response.meta.get("date_text") or self._utils_regex_date(response)
+        parsed = self._utils_parse_ds(dt)
+        return parsed or self._utils_url_date(response.url)
+
+    def _utils_regex_date(self, response):
+        patterns = [r"(\d{2}/\d{2}/\d{4})", r"(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4})"]
         for p in patterns:
-            match = re.search(p, text_chunk, re.IGNORECASE)
+            match = re.search(p, response.text[:20000], re.IGNORECASE)
             if match:
                 return match.group(1)
-        return None  # pragma: no cover
+        return None
 
-    def _extract_date_from_url(self, url):
-        # Format: /cases/YYYY/monthname/
-        months = {
-            "january": 1,
-            "february": 2,
-            "march": 3,
-            "april": 4,
-            "may": 5,
-            "june": 6,
-            "july": 7,
-            "august": 8,
-            "september": 9,
-            "october": 10,
-            "november": 11,
-            "december": 12,
-        }
-        match = re.search(r"/cases/(\d{4})/([^/]+)/", url)
-        if match:
-            year = int(match.group(1))
-            month_name = match.group(2).lower()
-            month = months.get(month_name, 1)
-            return datetime(year, month, 1)
-        return None  # pragma: no cover
-
-    def _parse_date(self, date_str):
-        if not date_str:
-            return None  # pragma: no cover
-        for fmt in ["%d/%m/%Y", "%d %B %Y", "%d-%m-%Y", "%Y-%m-%d"]:
+    def _utils_parse_ds(self, ds):
+        if not ds:
+            return None
+        for f in ["%d/%m/%Y", "%d %B %Y", "%d-%m-%Y", "%Y-%m-%d"]:
             try:
-                return datetime.strptime(date_str.strip(), fmt)
-            except ValueError:  # pragma: no cover
-                continue  # pragma: no cover
-        return None  # pragma: no cover
+                return datetime.strptime(ds.strip(), f)
+            except ValueError: 
+                continue
+        return None
 
-    def _get_document_url(self, response):
+    def _utils_url_date(self, url):
+        m = {"january":1,"february":2,"march":3,"april":4,"may":5,"june":6,"july":7,"august":8,"september":9,"october":10,"november":11,"december":12}
+        match = re.search(r"/cases/(\d{4})/([^/]+)/", url)
+        return datetime(int(match.group(1)), m.get(match.group(2).lower(), 1), 1) if match else None
+
+    def _utils_get_doc_meta(self, response):
         main = response.css("#main") or response
-        for ext in [".pdf", ".PDF", ".doc", ".docx"]:
-            link = main.css(f'a[href$="{ext}"]::attr(href)').get()
+        for ext in [".pdf", ".doc", ".docx"]:
+            link = main.css(f'a[href$="{ext}"]::attr(href), a[href$="{ext.upper()}"]::attr(href)').get()
             if link and "cookie" not in link.lower():
-                return urljoin(self.base_url, link), ext.lstrip(".").lower()
-        return None, "html"  # pragma: no cover
+                return response.urljoin(link), ext.lstrip(".").lower()
+        return None, "html"
 
-    def handle_error(self, failure):
-        logger.error(f"Request failed: {failure.request.url} - {failure.value}")
+    def _utils_extract_id(self, response):
+        return response.url.rstrip("/").split("/")[-1].upper()
 
-    def handle_download_error(self, failure):
-        item = failure.request.meta.get("item")  # pragma: no cover
-        if item:  # pragma: no cover
-            item["document_type"] = "html"  # pragma: no cover
-            yield item  # pragma: no cover
+    def handle_error(self, f):
+        logger.error(f"Request failed: {f.request.url}")
+
+    def handle_download_error(self, f):
+        item = f.request.meta.get("item")
+        if item:
+            item["document_type"] = "html"
+            yield item
 
     def closed(self, reason):
-        logger.info(
-            json.dumps(
-                {
-                    "event": "run_summary",
-                    "records_found": self._stats["records_found"],
-                    "records_scraped": self._stats["records_scraped"],
-                    "reason": reason,
-                }
-            )
-        )
+        s = self.crawler.stats.get_stats()
+        scraped_count = s.get("wrc/records_scraped", 0)
+        summary = {
+            "found": s.get("wrc/links_discovered", 0),
+            "scraped": scraped_count,
+            "pages": s.get("wrc/pages_crawled", 0),
+            "reason": reason
+        }
+        logger.info(f"Spider closed. Summary: {json.dumps(summary)}")
+        logger.info(f"TOTAL SCRAPED URLS: {scraped_count}")
