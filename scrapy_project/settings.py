@@ -34,9 +34,8 @@ PLAYWRIGHT_LAUNCH_OPTIONS = {
     ],
 }
 
-# Increase timeouts to handle slow server responses/Cloudflare validation
+# Increase timeouts for slow server responses
 PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 120000
-DOWNLOAD_TIMEOUT = 120
 
 # ============================================================
 # Performance & Memory Watchdog (Prevents OOM)
@@ -59,7 +58,6 @@ RANDOMIZE_DOWNLOAD_DELAY = False
 AUTOTHROTTLE_ENABLED = True
 AUTOTHROTTLE_START_DELAY = 1.0
 AUTOTHROTTLE_MAX_DELAY = 15.0
-AUTOTHROTTLE_TARGET_CONCURRENCY = 16.0
 AUTOTHROTTLE_TARGET_CONCURRENCY = 16.0  # Allow up to 16 concurrent requests per domain
 AUTOTHROTTLE_DEBUG = False
 
@@ -151,3 +149,8 @@ if PROXY_ENABLED:
         "scrapy.downloadermiddlewares.httpproxy.HttpProxyMiddleware"
     ] = 750
     PROXY_URL = os.getenv("PROXY_URL")
+
+
+# Development
+HTTPCACHE_ENABLED = True
+HTTPCACHE_EXPIRATION_SECS = 0  # Never expire
