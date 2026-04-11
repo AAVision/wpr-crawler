@@ -71,8 +71,11 @@ class WorkplaceRelationsSpider(scrapy.Spider):
                 "body_id": ",".join(target_ids),
                 "partition": start.strftime("%Y-%m"),
                 "playwright": True,
+                "playwright_page_goto_kwargs": {"wait_until": "domcontentloaded"},
                 "playwright_page_methods": [
-                    PageMethod("wait_for_selector", "li.each-item, .results-count", timeout=60000)
+                    PageMethod("wait_for_selector", "li.each-item, .results-count", timeout=60000),
+                    # Optimization: Block resources we don't need
+                    PageMethod("route", "**/*.{png,jpg,jpeg,svg,gif,woff,woff2,css}", lambda route: route.abort()),
                 ],
             },
             priority=100, # Discovery is priority #1
